@@ -1,0 +1,258 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  BUSINESS_OWNER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum BusinessStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+model User {
+  id            String      @id @default(cuid())
+  email         String      @unique
+  phone         String      @unique
+  password      String
+  firstName     String
+  lastName      String
+  role          UserRole    @default(USER)
+  status        UserStatus  @default(ACTIVE)
+  avatar        String?
+  emailVerified Boolean     @default(false)
+  phoneVerified Boolean     @default(false)
+  
+  businesses    Business[]
+  reviews       Review[]
+  favourites    Favourite[]
+  payments      Payment[]
+  blogs         Blog[]
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([email])
+  @@index([phone])
+}
+
+model Category {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  slug        String     @unique
+  description String?
+  icon        String?
+  image       String?
+  order       Int        @default(0)
+  
+  parentId    String?
+  parent      Category?  @relation("CategorySubcategories", fields: [parentId], references: [id], onDelete: Cascade)
+  subcategories Category[] @relation("CategorySubcategories")
+  
+  businesses  Business[]
+  
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  
+  @@index([slug])
+  @@index([parentId])
+}
+
+model Region {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  slug      String   @unique
+  
+  cities    City[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([slug])
+}
+
+model City {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  
+  regionId  String
+  region    Region   @relation(fields: [regionId], references: [id], onDelete: Cascade)
+  
+  businesses Business[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([slug])
+  @@index([regionId])
+}
+
+model Business {
+  id              String         @id @default(cuid())
+  name            String
+  slug            String         @unique
+  description     String?        @db.Text
+  email           String
+  phone           String
+  whatsapp        String?
+  website         String?
+  address         String
+  latitude        Float?
+  longitude       Float?
+  crNumber        String?
+  crVerified      Boolean        @default(false)
+  images          String[]
+  logo            String?
+  coverImage      String?
+  metaTitle       String?
+  metaDescription String?
+  keywords        String[]
+  status          BusinessStatus @default(PENDING)
+  averageRating   Float          @default(0)
+  totalReviews    Int            @default(0)
+  workingHours    Json?
+  isVerified      Boolean        @default(false)
+  
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  categoryId      String
+  category        Category       @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  
+  cityId          String
+  city            City           @relation(fields: [cityId], references: [id], onDelete: Restrict)
+  
+  services        Service[]
+  reviews         Review[]
+  favourites      Favourite[]
+  payments        Payment[]
+  
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  
+  @@index([slug])
+  @@index([userId])
+  @@index([categoryId])
+  @@index([cityId])
+  @@index([status])
+}
+
+model Service {
+  id          String   @id @default(cuid())
+  name        String
+  description String?  @db.Text
+  price       Float
+  duration    Int?
+  
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([businessId])
+}
+
+model Review {
+  id         String   @id @default(cuid())
+  rating     Int
+  comment    String?  @db.Text
+  
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  
+  @@unique([userId, businessId])
+  @@index([businessId])
+  @@index([userId])
+}
+
+model Favourite {
+  id         String   @id @default(cuid())
+  
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  
+  createdAt  DateTime @default(now())
+  
+  @@unique([userId, businessId])
+  @@index([userId])
+  @@index([businessId])
+}
+
+model Payment {
+  id            String        @id @default(cuid())
+  amount        Float
+  currency      String        @default("SAR")
+  status        PaymentStatus @default(PENDING)
+  paymentMethod String?
+  transactionId String?       @unique
+  description   String?
+  
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  businessId    String
+  business      Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  
+  @@index([userId])
+  @@index([businessId])
+  @@index([status])
+}
+
+model Blog {
+  id              String   @id @default(cuid())
+  title           String
+  slug            String   @unique
+  content         String   @db.Text
+  image           String?
+  metaTitle       String?
+  metaDescription String?
+  tags            String[]
+  published       Boolean  @default(false)
+  
+  authorId        String
+  author          User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([slug])
+  @@index([authorId])
+  @@index([published])
+}
