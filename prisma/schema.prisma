@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -115,7 +115,7 @@ model Business {
   id              String         @id @default(cuid())
   name            String
   slug            String         @unique
-  description     String?        @db.Text
+  description     String?        @db.LongText
   email           String
   phone           String
   whatsapp        String?
@@ -125,12 +125,12 @@ model Business {
   longitude       Float?
   crNumber        String?
   crVerified      Boolean        @default(false)
-  images          String[]
+  images          Json?
   logo            String?
   coverImage      String?
   metaTitle       String?
   metaDescription String?
-  keywords        String[]
+  keywords        Json?
   status          BusinessStatus @default(PENDING)
   averageRating   Float          @default(0)
   totalReviews    Int            @default(0)
@@ -164,7 +164,7 @@ model Business {
 model Service {
   id          String   @id @default(cuid())
   name        String
-  description String?  @db.Text
+  description String?  @db.LongText
   price       Float
   duration    Int?
   
@@ -180,7 +180,7 @@ model Service {
 model Review {
   id         String   @id @default(cuid())
   rating     Int
-  comment    String?  @db.Text
+  comment    String?  @db.LongText
   
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -239,11 +239,11 @@ model Blog {
   id              String   @id @default(cuid())
   title           String
   slug            String   @unique
-  content         String   @db.Text
+  content         String   @db.LongText
   image           String?
   metaTitle       String?
   metaDescription String?
-  tags            String[]
+  tags            Json?
   published       Boolean  @default(false)
   
   authorId        String

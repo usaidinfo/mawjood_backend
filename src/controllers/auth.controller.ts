@@ -6,7 +6,7 @@ import { sendSuccess, sendError } from '../utils/response.util';
 import { generateOTP, storeOTP, verifyOTP, sendEmailOTP, sendPhoneOTP } from '../utils/otp.util';
 import { RegisterDTO, AuthRequest } from '../types';
 
-// Register user (no OTP needed for registration)
+// Register user and send OTP to phone for verification
 export const register = async (req: Request, res: Response) => {
   try {
     const { email, phone, password, firstName, lastName, role }: RegisterDTO = req.body;
@@ -48,6 +48,14 @@ export const register = async (req: Request, res: Response) => {
       },
     });
 
+    // Send OTP to phone for verification
+    const otp = '1234'; // Static OTP for now
+    storeOTP(phone, otp);
+    
+    // TODO: Integrate actual SMS service later
+    // await sendPhoneOTP(phone, otp);
+    console.log(`OTP sent to ${phone}: ${otp}`);
+
     const token = generateToken({
       userId: user.id,
       email: user.email,
@@ -60,10 +68,12 @@ export const register = async (req: Request, res: Response) => {
       role: user.role,
     });
 
-    return sendSuccess(res, 201, 'User registered successfully', {
+    return sendSuccess(res, 201, 'User registered successfully. OTP sent to phone for verification.', {
       user,
       token,
       refreshToken,
+      otpSent: true,
+      phone: phone,
     });
   } catch (error) {
     console.error('Register error:', error);

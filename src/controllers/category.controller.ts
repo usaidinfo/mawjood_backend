@@ -121,7 +121,7 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
         icon,
         image,
         order: order ? parseInt(order) : 0,
-        parentId,
+        parentId: parentId || null,
       },
     });
 
@@ -152,7 +152,7 @@ export const updateCategory = async (req: AuthRequest, res: Response) => {
     if (slug) updateData.slug = slug;
     if (description !== undefined) updateData.description = description;
     if (order !== undefined) updateData.order = parseInt(order);
-    if (parentId !== undefined) updateData.parentId = parentId;
+    if (parentId !== undefined) updateData.parentId = parentId || null;
 
     // Handle file uploads
     const files = req.files as { [fieldname: string]: Express.Multer.File[] };

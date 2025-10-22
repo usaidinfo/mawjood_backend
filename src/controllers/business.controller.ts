@@ -44,17 +44,17 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
 
     if (search) {
       where.OR = [
-        { name: { contains: search as string, mode: 'insensitive' } },
-        { description: { contains: search as string, mode: 'insensitive' } },
+        { name: { contains: search as string } },
+        { description: { contains: search as string } },
       ];
     }
 
     if (categoryId) {
-      where.categoryId = categoryId;
+      where.categoryId = parseInt(categoryId as string);
     }
 
     if (cityId) {
-      where.cityId = cityId;
+      where.cityId = parseInt(cityId as string);
     }
 
     if (status) {
@@ -353,7 +353,7 @@ export const createBusiness = async (req: AuthRequest, res: Response) => {
         workingHours: workingHours ? JSON.parse(workingHours) : null,
         logo,
         coverImage,
-        images,
+        images: images.length > 0 ? images : null,
         status: 'PENDING',
       },
       include: {
@@ -460,7 +460,7 @@ export const updateBusiness = async (req: AuthRequest, res: Response) => {
             return url;
           })
         );
-        updateData.images = imageUploads;
+        updateData.images = imageUploads.length > 0 ? imageUploads : null;  // ← Changed
       }
     }
 

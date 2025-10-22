@@ -15,14 +15,14 @@ export const getAllBlogs = async (req: Request, res: Response) => {
 
     if (search) {
       where.OR = [
-        { title: { contains: search as string, mode: 'insensitive' } },
-        { content: { contains: search as string, mode: 'insensitive' } },
+        { title: { contains: search as string } },
+        { content: { contains: search as string } },
       ];
     }
 
-    if (tag) {
-      where.tags = { has: tag as string };
-    }
+    // if (tag) {
+    //   where.tags = { has: tag as string };
+    // }
 
     const [blogs, total] = await Promise.all([
       prisma.blog.findMany({
@@ -160,7 +160,7 @@ export const createBlog = async (req: AuthRequest, res: Response) => {
         image,
         metaTitle,
         metaDescription,
-        tags: tags ? JSON.parse(tags) : [],
+        tags: tags ? JSON.parse(tags) : null,
         published: published === 'true',
         authorId: userId!,
       },
