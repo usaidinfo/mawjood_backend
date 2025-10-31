@@ -13,6 +13,12 @@ import {
   getBusinessServices,
   deleteService,
   getAllBusinessesAdmin,
+  unifiedSearch,
+  getFeaturedBusinesses,
+  trackBusinessView,
+  getBusinessAnalytics,
+  getMyBusinessesServices,
+  getMyBusinessesReviews
 } from '../controllers/business.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 import { upload } from '../middleware/upload.middleware';
@@ -21,9 +27,18 @@ const router = Router();
 
 // Public routes
 router.get('/', getAllBusinesses);
-router.get('/:id', getBusinessById);
+router.get('/search/unified', unifiedSearch);
+router.get('/featured', getFeaturedBusinesses);
 router.get('/slug/:slug', getBusinessBySlug);
+
+router.get('/my/businesses', authenticate, getMyBusinesses);
+router.get('/my/services', authenticate, getMyBusinessesServices);
+router.get('/my/reviews', authenticate, getMyBusinessesReviews);
+
+router.get('/:id', getBusinessById);
 router.get('/:businessId/services', getBusinessServices);
+router.post('/:id/view', trackBusinessView);
+router.get('/:id/analytics', authenticate, getBusinessAnalytics);
 
 // Protected routes (Business Owner/Admin)
 router.post('/', authenticate, authorize('BUSINESS_OWNER', 'ADMIN'), 
@@ -34,7 +49,7 @@ router.post('/', authenticate, authorize('BUSINESS_OWNER', 'ADMIN'),
   ]), 
   createBusiness
 );
-router.get('/my/businesses', authenticate, getMyBusinesses);
+
 router.put('/:id', authenticate, 
   upload.fields([
     { name: 'logo', maxCount: 1 },
@@ -46,6 +61,7 @@ router.put('/:id', authenticate,
 router.delete('/:id', authenticate, deleteBusiness);
 router.post('/:businessId/services', authenticate, addService);
 router.delete('/services/:serviceId', authenticate, deleteService);
+
 
 // Admin only routes
 router.patch('/:id/approve', authenticate, authorize('ADMIN'), approveBusiness);

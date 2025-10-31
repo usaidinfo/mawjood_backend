@@ -12,9 +12,9 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(lat1 * (Math.PI / 180)) *
-      Math.cos(lat2 * (Math.PI / 180)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
+    Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) *
+    Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 };
@@ -26,12 +26,13 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       limit = '10',
       search,
       categoryId,
+      categoryIds, // ADD THIS LINE
       cityId,
       status,
       isVerified,
       latitude,
       longitude,
-      radius = '10', // km
+      radius = '10',
       sortBy = 'createdAt',
       order = 'desc',
     } = req.query;
@@ -49,12 +50,15 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       ];
     }
 
-    if (categoryId) {
-      where.categoryId = parseInt(categoryId as string);
+    if (categoryIds) {
+      const idsArray = typeof categoryIds === 'string' ? categoryIds.split(',') : categoryIds;
+      where.categoryId = { in: idsArray };
+    } else if (categoryId) {
+      where.categoryId = categoryId;
     }
 
-    if (cityId) {
-      where.cityId = parseInt(cityId as string);
+    if (cityId && typeof cityId === 'string' && cityId.trim().length > 0) {
+      where.cityId = cityId;
     }
 
     if (status) {
@@ -291,6 +295,9 @@ export const createBusiness = async (req: AuthRequest, res: Response) => {
       cityId,
       crNumber,
       workingHours,
+      metaTitle,
+      metaDescription,
+      keywords,
     } = req.body;
 
     if (!name || !slug || !email || !phone || !address || !categoryId || !cityId) {
@@ -316,12 +323,12 @@ export const createBusiness = async (req: AuthRequest, res: Response) => {
         logo = await uploadToCloudinary(files.logo[0], 'businesses/logos');
         fs.unlinkSync(files.logo[0].path);
       }
-      
+
       if (files.coverImage && files.coverImage[0]) {
         coverImage = await uploadToCloudinary(files.coverImage[0], 'businesses/covers');
         fs.unlinkSync(files.coverImage[0].path);
       }
-      
+
       if (files.images && files.images.length > 0) {
         const imageUploads = await Promise.all(
           files.images.map(async (file) => {
@@ -331,6 +338,30 @@ export const createBusiness = async (req: AuthRequest, res: Response) => {
           })
         );
         images = imageUploads;
+      }
+    }
+
+    // Parse working hours properly
+    let parsedWorkingHours = null;
+    if (workingHours) {
+      try {
+        parsedWorkingHours = typeof workingHours === 'string'
+          ? JSON.parse(workingHours)
+          : workingHours;
+      } catch (e) {
+        console.error('Working hours parse error:', e);
+      }
+    }
+
+    // Parse keywords properly
+    let parsedKeywords = null;
+    if (keywords) {
+      try {
+        parsedKeywords = typeof keywords === 'string'
+          ? JSON.parse(keywords)
+          : keywords;
+      } catch (e) {
+        console.error('Keywords parse error:', e);
       }
     }
 
@@ -350,7 +381,10 @@ export const createBusiness = async (req: AuthRequest, res: Response) => {
         cityId,
         userId: userId!,
         crNumber,
-        workingHours: workingHours ? JSON.parse(workingHours) : null,
+        workingHours: parsedWorkingHours,
+        metaTitle,
+        metaDescription,
+        keywords: parsedKeywords,
         logo,
         coverImage,
         images: images.length > 0 ? images : null,
@@ -365,7 +399,7 @@ export const createBusiness = async (req: AuthRequest, res: Response) => {
     return sendSuccess(res, 201, 'Business created successfully', business);
   } catch (error) {
     console.error('Create business error:', error);
-    
+
     // Cleanup uploaded files on error
     if (req.files) {
       const files = req.files as { [fieldname: string]: Express.Multer.File[] };
@@ -375,7 +409,7 @@ export const createBusiness = async (req: AuthRequest, res: Response) => {
         }
       });
     }
-    
+
     return sendError(res, 500, 'Failed to create business', error);
   }
 };
@@ -446,13 +480,13 @@ export const updateBusiness = async (req: AuthRequest, res: Response) => {
         updateData.logo = await uploadToCloudinary(files.logo[0], 'businesses/logos');
         fs.unlinkSync(files.logo[0].path);
       }
-      
+
       if (files.coverImage && files.coverImage[0]) {
         updateData.coverImage = await uploadToCloudinary(files.coverImage[0], 'businesses/covers');
         fs.unlinkSync(files.coverImage[0].path);
       }
-      
-      if (files.images && files.images.length > 0) {
+
+      if (files && files.images && files.images.length > 0) {
         const imageUploads = await Promise.all(
           files.images.map(async (file) => {
             const url = await uploadToCloudinary(file, 'businesses/gallery');
@@ -460,7 +494,11 @@ export const updateBusiness = async (req: AuthRequest, res: Response) => {
             return url;
           })
         );
-        updateData.images = imageUploads.length > 0 ? imageUploads : null;  // ← Changed
+
+        // Get existing images with proper type assertion
+        const existingImages = (existingBusiness.images as string[]) || [];
+
+        updateData.images = [...existingImages, ...imageUploads];
       }
     }
 
@@ -476,7 +514,7 @@ export const updateBusiness = async (req: AuthRequest, res: Response) => {
     return sendSuccess(res, 200, 'Business updated successfully', business);
   } catch (error) {
     console.error('Update business error:', error);
-    
+
     if (req.files) {
       const files = req.files as { [fieldname: string]: Express.Multer.File[] };
       Object.values(files).flat().forEach(file => {
@@ -485,7 +523,7 @@ export const updateBusiness = async (req: AuthRequest, res: Response) => {
         }
       });
     }
-    
+
     return sendError(res, 500, 'Failed to update business', error);
   }
 };
@@ -555,6 +593,17 @@ export const approveBusiness = async (req: AuthRequest, res: Response) => {
       },
     });
 
+    // Create notification for business owner
+    await prisma.notification.create({
+      data: {
+        userId: business.userId,
+        type: 'BUSINESS_APPROVED',
+        title: 'Business Approved! 🎉',
+        message: `Your business "${business.name}" has been approved and is now live!`,
+        link: `/dashboard/my-listings`,
+      },
+    });
+
     return sendSuccess(res, 200, 'Business approved successfully', business);
   } catch (error) {
     console.error('Approve business error:', error);
@@ -566,10 +615,22 @@ export const approveBusiness = async (req: AuthRequest, res: Response) => {
 export const rejectBusiness = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
+    const { reason } = req.body; // Optional rejection reason
 
     const business = await prisma.business.update({
       where: { id },
       data: { status: 'REJECTED' },
+    });
+
+    // Create notification for business owner
+    await prisma.notification.create({
+      data: {
+        userId: business.userId,
+        type: 'BUSINESS_REJECTED',
+        title: 'Business Rejected',
+        message: `Your business "${business.name}" has been rejected. ${reason ? `Reason: ${reason}` : 'Please contact support for more details.'}`,
+        link: `/dashboard/my-listings`,
+      },
     });
 
     return sendSuccess(res, 200, 'Business rejected successfully', business);
@@ -607,7 +668,7 @@ export const addService = async (req: AuthRequest, res: Response) => {
         name,
         description,
         price: parseFloat(price),
-        duration,
+        duration: duration ? parseInt(duration as string, 10) : null,
         businessId,
       },
     });
@@ -663,5 +724,359 @@ export const deleteService = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('Delete service error:', error);
     return sendError(res, 500, 'Failed to delete service', error);
+  }
+};
+
+// Unified search endpoint for both businesses and categories
+// Unified search endpoint for both businesses and categories
+export const unifiedSearch = async (req: Request, res: Response) => {
+  try {
+    const { query, cityId, limit = '10' } = req.query;
+
+    if (!query || (query as string).length < 2) {
+      return sendError(res, 400, 'Search query must be at least 2 characters');
+    }
+
+    const searchTerm = query as string;
+    const searchLimit = parseInt(limit as string);
+
+    // Search categories (remove mode: 'insensitive' for MySQL)
+    const categories = await prisma.category.findMany({
+      where: {
+        OR: [
+          { name: { contains: searchTerm } },
+          { description: { contains: searchTerm } },
+        ],
+      },
+      take: searchLimit,
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        icon: true,
+        description: true,
+      },
+    });
+
+    // Search businesses (remove mode: 'insensitive' and fix select/include)
+    const businessWhere: any = {
+      status: 'APPROVED',
+      OR: [
+        { name: { contains: searchTerm } },
+        { description: { contains: searchTerm } },
+      ],
+    };
+
+    if (cityId) {
+      businessWhere.cityId = cityId;
+    }
+
+    const businesses = await prisma.business.findMany({
+      where: businessWhere,
+      take: searchLimit,
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        logo: true,
+        averageRating: true,
+        totalReviews: true,
+        isVerified: true,
+        category: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+        city: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+      },
+    });
+
+    return sendSuccess(res, 200, 'Search results fetched successfully', {
+      categories: categories.map(cat => ({ ...cat, type: 'category' })),
+      businesses: businesses.map(bus => ({ ...bus, type: 'business' })),
+      query: searchTerm,
+    });
+  } catch (error) {
+    console.error('Unified search error:', error);
+    return sendError(res, 500, 'Failed to perform search', error);
+  }
+};
+
+// Add this export at the end of the file, before the last export
+
+// Get featured/trending businesses
+export const getFeaturedBusinesses = async (req: Request, res: Response) => {
+  try {
+    const { limit = '8', cityId } = req.query;
+
+    const where: any = {
+      status: 'APPROVED',
+      isVerified: true,
+    };
+
+    if (cityId) {
+      where.cityId = cityId;
+    }
+
+    // Get businesses with high ratings and reviews
+    const businesses = await prisma.business.findMany({
+      where,
+      include: {
+        category: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            icon: true,
+          },
+        },
+        city: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            avatar: true,
+          },
+        },
+      },
+      orderBy: [
+        { averageRating: 'desc' },
+        { totalReviews: 'desc' },
+        { createdAt: 'desc' },
+      ],
+      take: parseInt(limit as string),
+    });
+
+    return sendSuccess(res, 200, 'Featured businesses fetched successfully', businesses);
+  } catch (error) {
+    console.error('Get featured businesses error:', error);
+    return sendError(res, 500, 'Failed to fetch featured businesses', error);
+  }
+};
+
+export const trackBusinessView = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const ipAddress = req.ip || req.headers['x-forwarded-for'] as string || 'unknown';
+
+    // Check if this IP viewed in last hour
+    const recentView = await prisma.businessView.findFirst({
+      where: {
+        businessId: id,
+        ipAddress,
+        viewedAt: {
+          gte: new Date(Date.now() - 60 * 60 * 1000)
+        }
+      }
+    });
+
+    if (!recentView) {
+      await prisma.businessView.create({
+        data: {
+          businessId: id,
+          ipAddress
+        }
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'View tracked successfully'
+    });
+  } catch (error) {
+    console.error('Track view error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to track view'
+    });
+  }
+};
+
+export const getBusinessAnalytics = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Total views
+    const totalViews = await prisma.businessView.count({
+      where: { businessId: id }
+    });
+
+    // Today's views
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const todayViews = await prisma.businessView.count({
+      where: {
+        businessId: id,
+        viewedAt: { gte: todayStart }
+      }
+    });
+
+    // Last 7 days
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const last7DaysViews = await prisma.businessView.groupBy({
+      by: ['viewedAt'],
+      where: {
+        businessId: id,
+        viewedAt: { gte: sevenDaysAgo }
+      },
+      _count: true
+    });
+
+    // Format last 7 days data
+    const last7Days = [];
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dateString = date.toISOString().split('T')[0];
+
+      const dayViews = last7DaysViews.filter(v =>
+        v.viewedAt.toISOString().split('T')[0] === dateString
+      );
+
+      last7Days.push({
+        date: dateString,
+        count: dayViews.length
+      });
+    }
+
+    // Last 30 days (similar logic)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const last30DaysViews = await prisma.businessView.groupBy({
+      by: ['viewedAt'],
+      where: {
+        businessId: id,
+        viewedAt: { gte: thirtyDaysAgo }
+      },
+      _count: true
+    });
+
+    const last30Days = [];
+    for (let i = 29; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dateString = date.toISOString().split('T')[0];
+
+      const dayViews = last30DaysViews.filter(v =>
+        v.viewedAt.toISOString().split('T')[0] === dateString
+      );
+
+      last30Days.push({
+        date: dateString,
+        count: dayViews.length
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        totalViews,
+        todayViews,
+        last7Days,
+        last30Days
+      }
+    });
+  } catch (error) {
+    console.error('Get analytics error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to get analytics'
+    });
+  }
+};
+
+export const getMyBusinessesServices = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+
+    const businesses = await prisma.business.findMany({
+      where: {
+        userId,
+        services: {
+          some: {}  // Only businesses that have at least one service
+        }
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        logo: true,
+        services: {
+          orderBy: { createdAt: 'desc' }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    return sendSuccess(res, 200, 'Services fetched successfully', businesses);
+  } catch (error) {
+    console.error('Get my businesses services error:', error);
+    return sendError(res, 500, 'Failed to fetch services', error);
+  }
+};
+
+// Get all reviews received on user's businesses
+export const getMyBusinessesReviews = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+
+    // Get user's business IDs
+    const businesses = await prisma.business.findMany({
+      where: { userId },
+      select: { id: true }
+    });
+
+    const businessIds = businesses.map(b => b.id);
+
+    // Get all reviews for these businesses
+    const reviews = await prisma.review.findMany({
+      where: {
+        businessId: { in: businessIds }
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            avatar: true
+          }
+        },
+        business: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            logo: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    return sendSuccess(res, 200, 'Reviews fetched successfully', reviews);
+  } catch (error) {
+    console.error('Get my businesses reviews error:', error);
+    return sendError(res, 500, 'Failed to fetch reviews', error);
   }
 };

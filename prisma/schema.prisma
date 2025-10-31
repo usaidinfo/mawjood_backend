@@ -46,6 +46,7 @@ model User {
   emailVerified Boolean     @default(false)
   phoneVerified Boolean     @default(false)
   
+  notifications Notification[]
   businesses    Business[]
   reviews       Review[]
   favourites    Favourite[]
@@ -146,6 +147,7 @@ model Business {
   cityId          String
   city            City           @relation(fields: [cityId], references: [id], onDelete: Restrict)
   
+  views           BusinessView[]
   services        Service[]
   reviews         Review[]
   favourites      Favourite[]
@@ -255,4 +257,35 @@ model Blog {
   @@index([slug])
   @@index([authorId])
   @@index([published])
+}
+
+model BusinessView {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  ipAddress  String?
+  viewedAt   DateTime @default(now())
+  
+  @@index([businessId, viewedAt])
+  @@index([ipAddress, businessId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  type      String   // 'BUSINESS_APPROVED', 'BUSINESS_VERIFIED', 'NEW_REVIEW', 'BUSINESS_REJECTED'
+  title     String
+  message   String   @db.Text
+  link      String?  // Optional link to redirect
+  
+  isRead    Boolean  @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
 }

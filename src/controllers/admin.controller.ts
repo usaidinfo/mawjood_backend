@@ -3,7 +3,6 @@ import prisma from '../config/database';
 import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest } from '../types';
 
-// Get dashboard statistics
 export const getDashboardStats = async (req: AuthRequest, res: Response) => {
   try {
     const [

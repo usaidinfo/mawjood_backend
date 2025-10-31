@@ -13,6 +13,8 @@ import paymentRoutes from './routes/payment.routes';
 import blogRoutes from './routes/blog.routes';
 import adminRoutes from './routes/admin.routes';
 import uploadRoutes from './routes/upload.routes';
+import analyticsRoutes from './routes/analytics.routes';
+import notificationRoutes from './routes/notification.routes';
 
 // Import routes
 import authRoutes from './routes/auth.routes';
@@ -49,6 +51,8 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/blogs', blogRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Health check
 app.get('/health', (_req, res) => {

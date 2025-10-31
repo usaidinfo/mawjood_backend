@@ -120,6 +120,18 @@ export const createReview = async (req: AuthRequest, res: Response) => {
       },
     });
 
+    if (business.userId !== userId) { // Don't notify if owner reviews their own business
+      await prisma.notification.create({
+        data: {
+          userId: business.userId,
+          type: 'NEW_REVIEW',
+          title: 'New Review Received! ⭐',
+          message: `${review.user.firstName} ${review.user.lastName} left a ${rating}-star review on "${business.name}"`,
+          link: `/businesses/${business.slug}`,
+        },
+      });
+    }
+
     return sendSuccess(res, 201, 'Review created successfully', review);
   } catch (error) {
     console.error('Create review error:', error);
