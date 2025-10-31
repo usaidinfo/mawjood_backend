@@ -3,7 +3,6 @@ import prisma from '../config/database';
 import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest } from '../types';
 import { hashPassword } from '../utils/password.util';
-import fs from 'fs';
 import { uploadToCloudinary } from '../config/cloudinary';
 
 // Get user profile
@@ -51,7 +50,6 @@ export const updateUserProfile = async (req: AuthRequest, res: Response) => {
     // Handle avatar upload
     if (req.file) {
       avatar = await uploadToCloudinary(req.file, 'users/avatars');
-      fs.unlinkSync(req.file.path);
     }
 
     const updateData: any = {};
@@ -78,9 +76,6 @@ export const updateUserProfile = async (req: AuthRequest, res: Response) => {
     return sendSuccess(res, 200, 'Profile updated successfully', user);
   } catch (error) {
     console.error('Update profile error:', error);
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
     return sendError(res, 500, 'Failed to update profile', error);
   }
 };

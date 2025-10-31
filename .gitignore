@@ -28,6 +28,9 @@ Thumbs.db
 # Prisma
 prisma/migrations/
 
+# Uploads (if storing locally)
+uploads/
+
 # Testing
 coverage/
 .nyc_output/

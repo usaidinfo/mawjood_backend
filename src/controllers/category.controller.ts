@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import prisma from '../config/database';
 import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest } from '../types';
-import fs from 'fs';
 import { uploadToCloudinary } from '../config/cloudinary';
 
 // Get all categories with subcategories
@@ -104,12 +103,10 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
     if (files) {
       if (files.icon && files.icon[0]) {
         icon = await uploadToCloudinary(files.icon[0], 'categories/icons');
-        fs.unlinkSync(files.icon[0].path);
       }
       
       if (files.image && files.image[0]) {
         image = await uploadToCloudinary(files.image[0], 'categories/images');
-        fs.unlinkSync(files.image[0].path);
       }
     }
 
@@ -129,14 +126,6 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('Create category error:', error);
     
-    if (req.files) {
-      const files = req.files as { [fieldname: string]: Express.Multer.File[] };
-      Object.values(files).flat().forEach(file => {
-        if (fs.existsSync(file.path)) {
-          fs.unlinkSync(file.path);
-        }
-      });
-    }
     
     return sendError(res, 500, 'Failed to create category', error);
   }
@@ -160,12 +149,10 @@ export const updateCategory = async (req: AuthRequest, res: Response) => {
     if (files) {
       if (files.icon && files.icon[0]) {
         updateData.icon = await uploadToCloudinary(files.icon[0], 'categories/icons');
-        fs.unlinkSync(files.icon[0].path);
       }
       
       if (files.image && files.image[0]) {
         updateData.image = await uploadToCloudinary(files.image[0], 'categories/images');
-        fs.unlinkSync(files.image[0].path);
       }
     }
 
@@ -178,14 +165,6 @@ export const updateCategory = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('Update category error:', error);
     
-    if (req.files) {
-      const files = req.files as { [fieldname: string]: Express.Multer.File[] };
-      Object.values(files).flat().forEach(file => {
-        if (fs.existsSync(file.path)) {
-          fs.unlinkSync(file.path);
-        }
-      });
-    }
     
     return sendError(res, 500, 'Failed to update category', error);
   }

@@ -3,7 +3,6 @@ import prisma from '../config/database';
 import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest, BusinessDTO } from '../types';
 import { uploadToCloudinary } from '../config/cloudinary';
-import fs from 'fs';
 
 const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
   const R = 6371; // Earth radius in km
@@ -321,19 +320,16 @@ export const createBusiness = async (req: AuthRequest, res: Response) => {
     if (files) {
       if (files.logo && files.logo[0]) {
         logo = await uploadToCloudinary(files.logo[0], 'businesses/logos');
-        fs.unlinkSync(files.logo[0].path);
       }
 
       if (files.coverImage && files.coverImage[0]) {
         coverImage = await uploadToCloudinary(files.coverImage[0], 'businesses/covers');
-        fs.unlinkSync(files.coverImage[0].path);
       }
 
       if (files.images && files.images.length > 0) {
         const imageUploads = await Promise.all(
           files.images.map(async (file) => {
             const url = await uploadToCloudinary(file, 'businesses/gallery');
-            fs.unlinkSync(file.path);
             return url;
           })
         );
@@ -401,14 +397,6 @@ export const createBusiness = async (req: AuthRequest, res: Response) => {
     console.error('Create business error:', error);
 
     // Cleanup uploaded files on error
-    if (req.files) {
-      const files = req.files as { [fieldname: string]: Express.Multer.File[] };
-      Object.values(files).flat().forEach(file => {
-        if (fs.existsSync(file.path)) {
-          fs.unlinkSync(file.path);
-        }
-      });
-    }
 
     return sendError(res, 500, 'Failed to create business', error);
   }
@@ -478,19 +466,16 @@ export const updateBusiness = async (req: AuthRequest, res: Response) => {
     if (files) {
       if (files.logo && files.logo[0]) {
         updateData.logo = await uploadToCloudinary(files.logo[0], 'businesses/logos');
-        fs.unlinkSync(files.logo[0].path);
       }
 
       if (files.coverImage && files.coverImage[0]) {
         updateData.coverImage = await uploadToCloudinary(files.coverImage[0], 'businesses/covers');
-        fs.unlinkSync(files.coverImage[0].path);
       }
 
       if (files && files.images && files.images.length > 0) {
         const imageUploads = await Promise.all(
           files.images.map(async (file) => {
             const url = await uploadToCloudinary(file, 'businesses/gallery');
-            fs.unlinkSync(file.path);
             return url;
           })
         );
@@ -515,14 +500,7 @@ export const updateBusiness = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('Update business error:', error);
 
-    if (req.files) {
-      const files = req.files as { [fieldname: string]: Express.Multer.File[] };
-      Object.values(files).flat().forEach(file => {
-        if (fs.existsSync(file.path)) {
-          fs.unlinkSync(file.path);
-        }
-      });
-    }
+
 
     return sendError(res, 500, 'Failed to update business', error);
   }

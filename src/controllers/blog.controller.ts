@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import prisma from '../config/database';
 import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest } from '../types';
-import fs from 'fs';
 import { uploadToCloudinary } from '../config/cloudinary';
 
 // Get all published blogs
@@ -149,7 +148,6 @@ export const createBlog = async (req: AuthRequest, res: Response) => {
     let image = null;
     if (req.file) {
       image = await uploadToCloudinary(req.file, 'blogs');
-      fs.unlinkSync(req.file.path);
     }
 
     const blog = await prisma.blog.create({
@@ -179,9 +177,6 @@ export const createBlog = async (req: AuthRequest, res: Response) => {
     return sendSuccess(res, 201, 'Blog created successfully', blog);
   } catch (error) {
     console.error('Create blog error:', error);
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
     return sendError(res, 500, 'Failed to create blog', error);
   }
 };
@@ -202,7 +197,6 @@ export const updateBlog = async (req: AuthRequest, res: Response) => {
 
     if (req.file) {
       updateData.image = await uploadToCloudinary(req.file, 'blogs');
-      fs.unlinkSync(req.file.path);
     }
 
     const blog = await prisma.blog.update({
@@ -223,9 +217,6 @@ export const updateBlog = async (req: AuthRequest, res: Response) => {
     return sendSuccess(res, 200, 'Blog updated successfully', blog);
   } catch (error) {
     console.error('Update blog error:', error);
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
     return sendError(res, 500, 'Failed to update blog', error);
   }
 };
