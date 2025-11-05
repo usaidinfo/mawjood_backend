@@ -10,25 +10,32 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
       totalBusinesses,
       pendingBusinesses,
       approvedBusinesses,
+      rejectedBusinesses,
+      suspendedBusinesses,
       totalReviews,
       totalPayments,
       totalCategories,
       totalCities,
+      totalRegions,
     ] = await Promise.all([
       prisma.user.count(),
       prisma.business.count(),
       prisma.business.count({ where: { status: 'PENDING' } }),
       prisma.business.count({ where: { status: 'APPROVED' } }),
+      prisma.business.count({ where: { status: 'REJECTED' } }),
+      prisma.business.count({ where: { status: 'SUSPENDED' } }),
       prisma.review.count(),
       prisma.payment.count(),
       prisma.category.count(),
       prisma.city.count(),
+      prisma.region.count(),
     ]);
 
-    // Get recent businesses
-    const recentBusinesses = await prisma.business.findMany({
+    // Get pending businesses (limited to 5 for quick view)
+    const pendingBusinessesList = await prisma.business.findMany({
+      where: { status: 'PENDING' },
       take: 5,
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: 'asc' },
       include: {
         user: {
           select: {
@@ -37,8 +44,16 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
             email: true,
           },
         },
-        category: true,
-        city: true,
+        category: {
+          select: {
+            name: true,
+          },
+        },
+        city: {
+          select: {
+            name: true,
+          },
+        },
       },
     });
 
@@ -68,31 +83,156 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
       }),
     ]);
 
-    const stats = {
-      users: {
-        total: totalUsers,
+    // Business growth data (last 6 months)
+    const businessGrowth = [];
+    const currentDate = new Date();
+    
+    for (let i = 5; i >= 0; i--) {
+      const date = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+      const nextMonth = new Date(date.getFullYear(), date.getMonth() + 1, 1);
+
+      const count = await prisma.business.count({
+        where: {
+          createdAt: {
+            gte: date,
+            lt: nextMonth,
+          },
+        },
+      });
+
+      businessGrowth.push({
+        month: date.toLocaleString('default', { month: 'short' }),
+        year: date.getFullYear(),
+        count,
+      });
+    }
+
+    // Businesses by category (for pie chart)
+    const businessesByCategory = await prisma.category.findMany({
+      select: {
+        id: true,
+        name: true,
+        _count: {
+          select: {
+            businesses: true,
+          },
+        },
       },
-      businesses: {
-        total: totalBusinesses,
+      orderBy: {
+        businesses: {
+          _count: 'desc',
+        },
+      },
+      take: 10, // Top 10 categories
+    });
+
+    const categoryData = businessesByCategory.map(cat => ({
+      categoryId: cat.id,
+      categoryName: cat.name,
+      count: cat._count.businesses,
+    }));
+
+    // Businesses by city (for bar chart)
+    const businessesByCity = await prisma.city.findMany({
+      select: {
+        id: true,
+        name: true,
+        _count: {
+          select: {
+            businesses: true,
+          },
+        },
+      },
+      orderBy: {
+        businesses: {
+          _count: 'desc',
+        },
+      },
+      take: 10, // Top 10 cities
+    });
+
+    const cityData = businessesByCity.map(city => ({
+      cityId: city.id,
+      cityName: city.name,
+      count: city._count.businesses,
+    }));
+
+    // Businesses by region (alternative for bar chart)
+    const businessesByRegion = await prisma.region.findMany({
+      select: {
+        id: true,
+        name: true,
+        cities: {
+          select: {
+            _count: {
+              select: {
+                businesses: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const regionData = businessesByRegion.map(region => ({
+      regionId: region.id,
+      regionName: region.name,
+      count: region.cities.reduce((sum, city) => sum + city._count.businesses, 0),
+    })).sort((a, b) => b.count - a.count);
+
+    // Count active admins
+    const activeAdmins = await prisma.user.count({
+      where: {
+        role: 'ADMIN',
+        status: 'ACTIVE',
+      },
+    });
+
+    const stats = {
+      // Overview Stats
+      overview: {
+        totalUsers,
+        totalBusinesses,
+        totalReviews,
+        totalPayments,
+      },
+      
+      // Business Status Breakdown
+      businessStatus: {
         pending: pendingBusinesses,
         approved: approvedBusinesses,
+        rejected: rejectedBusinesses,
+        suspended: suspendedBusinesses,
       },
-      reviews: {
-        total: totalReviews,
-      },
+      
+      // Payment Stats
       payments: {
         total: totalPayments,
         completed: completedPayments,
         pending: pendingPayments,
         totalRevenue: totalRevenue._sum.amount || 0,
       },
-      categories: {
-        total: totalCategories,
+      
+      // System Overview
+      system: {
+        totalCategories,
+        totalCities,
+        totalRegions,
+        activeAdmins,
       },
-      cities: {
-        total: totalCities,
+      
+      // Charts Data
+      charts: {
+        businessGrowth, // Line chart - last 6 months
+        businessesByCategory: categoryData, // Pie chart
+        businessesByCity: cityData, // Bar chart
+        businessesByRegion: regionData, // Alternative bar chart
       },
-      recentBusinesses,
+      
+      // Pending Approvals (for quick action section)
+      pendingApprovals: pendingBusinessesList,
+      
+      // Recent Users
       recentUsers,
     };
 
@@ -327,12 +467,44 @@ export const deleteUser = async (req: AuthRequest, res: Response) => {
 // Get pending businesses for approval
 export const getPendingBusinesses = async (req: Request, res: Response) => {
   try {
-    const { page = '1', limit = '10' } = req.query;
+    const { page = '1', limit = '10', search } = req.query;
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+
+    const where: any = { status: 'PENDING' };
+
+    // Add search functionality
+    if (search && typeof search === 'string' && search.trim().length > 0) {
+      const searchTerm = search.trim();
+      const searchConditions: any[] = [
+        { name: { contains: searchTerm } },
+        { description: { contains: searchTerm } },
+        { 
+          user: {
+            OR: [
+              { firstName: { contains: searchTerm } },
+              { lastName: { contains: searchTerm } },
+              { email: { contains: searchTerm } },
+            ],
+          },
+        },
+        { 
+          city: {
+            name: { contains: searchTerm },
+          },
+        },
+      ];
+
+      // Combine status filter with search using AND
+      where.AND = [
+        { status: 'PENDING' },
+        { OR: searchConditions },
+      ];
+      delete where.status;
+    }
 
     const [businesses, total] = await Promise.all([
       prisma.business.findMany({
-        where: { status: 'PENDING' },
+        where,
         include: {
           user: {
             select: {
@@ -352,7 +524,7 @@ export const getPendingBusinesses = async (req: Request, res: Response) => {
         take: parseInt(limit as string),
         orderBy: { createdAt: 'asc' },
       }),
-      prisma.business.count({ where: { status: 'PENDING' } }),
+      prisma.business.count({ where }),
     ]);
 
     return sendSuccess(res, 200, 'Pending businesses fetched successfully', {

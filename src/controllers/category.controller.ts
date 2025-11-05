@@ -7,17 +7,41 @@ import { uploadToCloudinary } from '../config/cloudinary';
 // Get all categories with subcategories
 export const getAllCategories = async (req: Request, res: Response) => {
   try {
-    const categories = await prisma.category.findMany({
-      where: { parentId: null },
-      include: {
-        subcategories: {
-          orderBy: { order: 'asc' },
-        },
-      },
-      orderBy: { order: 'asc' },
-    });
+    const { page = '1', limit = '20' } = req.query;
+    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
 
-    return sendSuccess(res, 200, 'Categories fetched successfully', categories);
+    const [categories, total] = await Promise.all([
+      prisma.category.findMany({
+        where: { parentId: null },
+        include: {
+          subcategories: {
+            orderBy: { order: 'asc' },
+          },
+          _count: {
+            select: {
+              subcategories: true,
+              businesses: true,
+            },
+          },
+        },
+        orderBy: { order: 'asc' },
+        skip,
+        take: parseInt(limit as string),
+      }),
+      prisma.category.count({
+        where: { parentId: null },
+      }),
+    ]);
+
+    return sendSuccess(res, 200, 'Categories fetched successfully', {
+      categories,
+      pagination: {
+        total,
+        page: parseInt(page as string),
+        limit: parseInt(limit as string),
+        totalPages: Math.ceil(total / parseInt(limit as string)),
+      },
+    });
   } catch (error) {
     console.error('Get categories error:', error);
     return sendError(res, 500, 'Failed to fetch categories', error);
@@ -110,6 +134,33 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
       }
     }
 
+    // Auto-assign order if not provided
+    let finalOrder: number | null = null;
+    
+    if (order !== undefined && order !== null && order !== '') {
+      const parsedOrder = parseInt(order as string);
+      if (!isNaN(parsedOrder)) {
+        finalOrder = parsedOrder;
+      }
+    }
+    
+    if (finalOrder === null) {
+      // Find the maximum order for categories with the same parentId
+      const maxOrderResult = await prisma.category.aggregate({
+        where: {
+          parentId: parentId || null,
+        },
+        _max: {
+          order: true,
+        },
+      });
+      
+      // If no categories exist with this parentId, start from 0, otherwise add 1 to max
+      finalOrder = maxOrderResult._max.order !== null 
+        ? maxOrderResult._max.order + 1 
+        : 0;
+    }
+
     const category = await prisma.category.create({
       data: {
         name,
@@ -117,7 +168,7 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
         description,
         icon,
         image,
-        order: order ? parseInt(order) : 0,
+        order: finalOrder,
         parentId: parentId || null,
       },
     });

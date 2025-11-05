@@ -135,17 +135,58 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
 // Get all businesses for admin (all statuses)
 export const getAllBusinessesAdmin = async (req: AuthRequest, res: Response) => {
   try {
-    const { page = '1', limit = '10', status } = req.query;
+    const { page = '1', limit = '10', status, search } = req.query;
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
 
-    const where: any = status ? { status } : {}; // No filter if no status
+    const where: any = {};
+
+    // Add status filter
+    if (status) {
+      where.status = status;
+    }
+
+    // Add search functionality
+    if (search && typeof search === 'string' && search.trim().length > 0) {
+      const searchTerm = search.trim();
+      const searchConditions: any[] = [
+        { name: { contains: searchTerm } },
+        { description: { contains: searchTerm } },
+        { 
+          user: {
+            OR: [
+              { firstName: { contains: searchTerm } },
+              { lastName: { contains: searchTerm } },
+              { email: { contains: searchTerm } },
+            ],
+          },
+        },
+        { 
+          city: {
+            name: { contains: searchTerm },
+          },
+        },
+      ];
+
+      // If we already have a status filter, combine with AND
+      if (where.status) {
+        where.AND = [
+          { status: where.status },
+          { OR: searchConditions },
+        ];
+        delete where.status;
+      } else {
+        where.OR = searchConditions;
+      }
+    }
 
     const [businesses, total] = await Promise.all([
       prisma.business.findMany({
         where,
         include: {
           category: true,
-          city: true,
+          city: {
+            include: { region: true },
+          },
           user: {
             select: {
               id: true,
