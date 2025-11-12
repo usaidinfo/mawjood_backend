@@ -4,6 +4,38 @@ import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest, BusinessDTO } from '../types';
 import { uploadToCloudinary } from '../config/cloudinary';
 
+type CacheEntry<T> = {
+  expiresAt: number;
+  value: T;
+};
+
+const CACHE_TTL_MS = 60 * 1000;
+const LOCATION_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const getBusinessCache = () => {
+  const globalRef = globalThis as typeof globalThis & {
+    __businessCache?: Map<string, CacheEntry<any>>;
+  };
+
+  if (!globalRef.__businessCache) {
+    globalRef.__businessCache = new Map();
+  }
+
+  return globalRef.__businessCache;
+};
+
+const getLocationCache = () => {
+  const globalRef = globalThis as typeof globalThis & {
+    __locationHierarchyCache?: Map<string, CacheEntry<LocationHierarchyResult | null>>;
+  };
+
+  if (!globalRef.__locationHierarchyCache) {
+    globalRef.__locationHierarchyCache = new Map();
+  }
+
+  return globalRef.__locationHierarchyCache;
+};
+
 type LocationType = 'city' | 'region' | 'country';
 
 interface LocationLevel {
@@ -45,6 +77,13 @@ const resolveLocationHierarchy = async (
   locationType?: string
 ): Promise<LocationHierarchyResult | null> => {
   const requestedType = normaliseLocationType(locationType);
+
+  const locationCache = getLocationCache();
+  const cacheKey = `${locationId}:${requestedType ?? 'auto'}`;
+  const cached = locationCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
 
   if (!requestedType || requestedType === 'city') {
     const city = await prismaClient.city.findUnique({
@@ -88,12 +127,17 @@ const resolveLocationHierarchy = async (
         }
       }
 
-      return {
+      const result: LocationHierarchyResult = {
         resolvedType: 'city',
         resolvedName: city.name,
         requestedId: city.id,
         levels,
       };
+      locationCache.set(cacheKey, {
+        expiresAt: Date.now() + LOCATION_CACHE_TTL_MS,
+        value: result,
+      });
+      return result;
     }
   }
 
@@ -107,25 +151,30 @@ const resolveLocationHierarchy = async (
       },
     });
 
-      if (region) {
-        const levels: LocationLevel[] = [];
-        const regionCityIds = await fetchRegionCityIds(region.id);
-        if (regionCityIds.length > 0) {
-          levels.push({
-            type: 'region',
-            id: region.id,
-            name: region.name,
-            cityIds: regionCityIds,
-          });
-        }
-
-        return {
-          resolvedType: 'region',
-          resolvedName: region.name,
-          requestedId: region.id,
-          levels,
-        };
+    if (region) {
+      const levels: LocationLevel[] = [];
+      const regionCityIds = await fetchRegionCityIds(region.id);
+      if (regionCityIds.length > 0) {
+        levels.push({
+          type: 'region',
+          id: region.id,
+          name: region.name,
+          cityIds: regionCityIds,
+        });
       }
+
+      const result: LocationHierarchyResult = {
+        resolvedType: 'region',
+        resolvedName: region.name,
+        requestedId: region.id,
+        levels,
+      };
+      locationCache.set(cacheKey, {
+        expiresAt: Date.now() + LOCATION_CACHE_TTL_MS,
+        value: result,
+      });
+      return result;
+    }
   }
 
   return null;
@@ -150,6 +199,27 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
     } = req.query;
 
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+
+    const cacheKey = JSON.stringify({
+      page,
+      limit,
+      search,
+      categoryId,
+      categoryIds,
+      cityId,
+      locationId,
+      locationType,
+      status,
+      isVerified,
+      sortBy,
+      rating,
+    });
+
+    const businessCache = getBusinessCache();
+    const cachedResponse = businessCache.get(cacheKey);
+    if (cachedResponse && cachedResponse.expiresAt > Date.now()) {
+      return sendSuccess(res, 200, 'Businesses fetched successfully', cachedResponse.value);
+    }
 
     const baseWhere: any = {
       status: 'APPROVED',
@@ -335,6 +405,11 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
     if (locationContext) {
       responsePayload.locationContext = locationContext;
     }
+
+    businessCache.set(cacheKey, {
+      expiresAt: Date.now() + CACHE_TTL_MS,
+      value: responsePayload,
+    });
 
     const requestDuration = Date.now() - requestStart;
     if (requestDuration > 1000) {
