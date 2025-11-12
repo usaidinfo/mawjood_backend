@@ -220,6 +220,7 @@ const resolveLocationHierarchy = async (
 
 export const getAllBusinesses = async (req: Request, res: Response) => {
   try {
+    const requestStart = Date.now();
     const {
       page = '1',
       limit = '10',
@@ -306,13 +307,6 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       return whereClause;
     };
 
-    const fetchBusinessesByCityIds = async (cityIds?: string[]) =>
-      prisma.business.findMany({
-        where: buildWhereWithCityIds(cityIds),
-        include: includeConfig,
-        orderBy: { createdAt: 'desc' },
-      });
-
     let locationHierarchy: LocationHierarchyResult | null = null;
     if (resolvedLocationId) {
       locationHierarchy = await resolveLocationHierarchy(
@@ -322,22 +316,32 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
     }
 
     let appliedLocationLevel: LocationLevel | null = null;
-    const rawBusinesses =
-      locationHierarchy && locationHierarchy.levels.length > 0
-        ? await (async () => {
-            for (const level of locationHierarchy!.levels) {
-              if (!level.cityIds.length) {
-                continue;
-              }
-              const result = await fetchBusinessesByCityIds(level.cityIds);
-              if (result.length > 0) {
-                appliedLocationLevel = level;
-                return result;
-              }
-            }
-            return await fetchBusinessesByCityIds();
-          })()
-        : await fetchBusinessesByCityIds();
+    let whereClause = buildWhereWithCityIds();
+
+    if (locationHierarchy && locationHierarchy.levels.length > 0) {
+      for (const level of locationHierarchy.levels) {
+        if (!level.cityIds.length) {
+          continue;
+        }
+        const candidateWhere = buildWhereWithCityIds(level.cityIds);
+        const count = await prisma.business.count({ where: candidateWhere });
+        if (count > 0) {
+          appliedLocationLevel = level;
+          whereClause = candidateWhere;
+          break;
+        }
+      }
+    }
+
+    const total = await prisma.business.count({ where: whereClause });
+
+    const rawBusinesses = await prisma.business.findMany({
+      where: whereClause,
+      include: includeConfig,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: parseInt(limit as string),
+    });
 
     const businessesWithViews = rawBusinesses.map((business: any) => {
       const { _count, ...rest } = business;
@@ -454,12 +458,6 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       );
     }
 
-    const total = sortedBusinesses.length;
-    const paginatedBusinesses = sortedBusinesses.slice(
-      skip,
-      skip + parseInt(limit as string)
-    );
-
     const locationContext = locationHierarchy
       ? {
           requested: {
@@ -481,7 +479,7 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       : undefined;
 
     const responsePayload: any = {
-      businesses: paginatedBusinesses,
+      businesses: sortedBusinesses,
       pagination: {
         total,
         page: parseInt(page as string),
@@ -492,6 +490,24 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
 
     if (locationContext) {
       responsePayload.locationContext = locationContext;
+    }
+
+    const requestDuration = Date.now() - requestStart;
+    if (requestDuration > 1000) {
+      console.warn(
+        `[PERF] getAllBusinesses took ${requestDuration}ms`,
+        JSON.stringify({
+          search,
+          categoryId,
+          categoryIds,
+          locationId: resolvedLocationId,
+          locationType: resolvedLocationType,
+          sortBy,
+          rating,
+          resultCount: responsePayload.businesses.length,
+          total,
+        })
+      );
     }
 
     return sendSuccess(res, 200, 'Businesses fetched successfully', responsePayload);
