@@ -4,20 +4,6 @@ import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest, BusinessDTO } from '../types';
 import { uploadToCloudinary } from '../config/cloudinary';
 
-const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-  const R = 6371; // Earth radius in km
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLon = (lon2 - lon1) * (Math.PI / 180);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * (Math.PI / 180)) *
-    Math.cos(lat2 * (Math.PI / 180)) *
-    Math.sin(dLon / 2) *
-    Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-};
-
 type LocationType = 'city' | 'region' | 'country';
 
 interface LocationLevel {
@@ -54,41 +40,6 @@ const fetchRegionCityIds = async (regionId: string): Promise<string[]> => {
   return uniqueCityIds(cities.map((c) => c.id));
 };
 
-const buildCountryLevel = async (countryId: string): Promise<LocationLevel | null> => {
-  const country = await prismaClient.country.findUnique({
-    where: { id: countryId },
-    select: {
-      id: true,
-      name: true,
-    },
-  });
-
-  if (!country) {
-    return null;
-  }
-
-  const countryCities = await prismaClient.city.findMany({
-    where: {
-      region: {
-        countryId,
-      },
-    },
-    select: { id: true },
-  });
-
-  const cityIds = uniqueCityIds(countryCities.map((c) => c.id));
-  if (!cityIds.length) {
-    return null;
-  }
-
-  return {
-    type: 'country',
-    id: country.id,
-    name: country.name,
-    cityIds,
-  };
-};
-
 const resolveLocationHierarchy = async (
   locationId: string,
   locationType?: string
@@ -121,7 +72,6 @@ const resolveLocationHierarchy = async (
           select: {
             id: true,
             name: true,
-            countryId: true,
           },
         });
 
@@ -134,13 +84,6 @@ const resolveLocationHierarchy = async (
               name: region.name,
               cityIds: regionCityIds,
             });
-          }
-
-          if (region.countryId) {
-            const countryLevel = await buildCountryLevel(region.countryId);
-            if (countryLevel) {
-              levels.push(countryLevel);
-            }
           }
         }
       }
@@ -164,55 +107,25 @@ const resolveLocationHierarchy = async (
       },
     });
 
-    if (region) {
-      const levels: LocationLevel[] = [];
-      const regionCityIds = await fetchRegionCityIds(region.id);
-      if (regionCityIds.length > 0) {
-        levels.push({
-          type: 'region',
-          id: region.id,
-          name: region.name,
-          cityIds: regionCityIds,
-        });
-      }
-
-      if (region.countryId) {
-        const countryLevel = await buildCountryLevel(region.countryId);
-        if (countryLevel) {
-          levels.push(countryLevel);
+      if (region) {
+        const levels: LocationLevel[] = [];
+        const regionCityIds = await fetchRegionCityIds(region.id);
+        if (regionCityIds.length > 0) {
+          levels.push({
+            type: 'region',
+            id: region.id,
+            name: region.name,
+            cityIds: regionCityIds,
+          });
         }
-      }
 
-      return {
-        resolvedType: 'region',
-        resolvedName: region.name,
-        requestedId: region.id,
-        levels,
-      };
-    }
-  }
-
-  if (!requestedType || requestedType === 'country') {
-    const country = await prismaClient.country.findUnique({
-      where: { id: locationId },
-      select: {
-        id: true,
-        name: true,
-      },
-    });
-
-    if (country) {
-      const countryLevel = await buildCountryLevel(country.id);
-
-      if (countryLevel) {
         return {
-          resolvedType: 'country',
-          resolvedName: country.name,
-          requestedId: country.id,
-          levels: [countryLevel],
+          resolvedType: 'region',
+          resolvedName: region.name,
+          requestedId: region.id,
+          levels,
         };
       }
-    }
   }
 
   return null;
@@ -232,9 +145,6 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       locationType,
       status,
       isVerified,
-      latitude,
-      longitude,
-      radius = '10',
       sortBy = 'newest',
       rating,
     } = req.query;
@@ -367,7 +277,8 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
           ];
         case 'popular':
           return [
-            { views: { _count: 'desc' as const } },
+            { averageRating: 'desc' as const },
+            { totalReviews: 'desc' as const },
             { createdAt: 'desc' as const },
           ];
         case 'name_asc':
@@ -389,53 +300,7 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       take: parseInt(limit as string),
     });
 
-    const businessIds = rawBusinesses.map((business: any) => business.id);
-
-    const viewCounts = businessIds.length
-      ? await prisma.businessView.groupBy({
-          by: ['businessId'],
-          where: { businessId: { in: businessIds } },
-          _count: { _all: true },
-        })
-      : [];
-
-    const viewCountMap = viewCounts.reduce<Record<string, number>>((acc, item) => {
-      acc[item.businessId] = item._count._all;
-      return acc;
-    }, {});
-
-    let resultBusinesses = rawBusinesses.map((business: any) => ({
-      ...business,
-      viewCount: viewCountMap[business.id] ?? 0,
-    }));
-
-    if (latitude && longitude) {
-      const userLat = parseFloat(latitude as string);
-      const userLon = parseFloat(longitude as string);
-      const maxRadius = parseFloat(radius as string);
-
-      resultBusinesses = resultBusinesses
-        .map((business) => {
-          if (business.latitude && business.longitude) {
-            const distance = calculateDistance(
-              userLat,
-              userLon,
-              business.latitude,
-              business.longitude
-            );
-            return { ...business, distance };
-          }
-          return { ...business, distance: null };
-        })
-        .filter(
-          (business) => business.distance === null || business.distance <= maxRadius
-        )
-        .sort((a, b) => {
-          if (a.distance === null) return 1;
-          if (b.distance === null) return -1;
-          return a.distance - b.distance;
-        });
-    }
+    const resultBusinesses = rawBusinesses;
 
     const locationContext = locationHierarchy
       ? {
