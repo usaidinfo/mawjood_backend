@@ -4,6 +4,22 @@ import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest, BusinessDTO } from '../types';
 import { uploadToCloudinary } from '../config/cloudinary';
 
+type LocationType = 'city' | 'region' | 'country';
+
+interface LocationLevel {
+  type: LocationType;
+  id: string;
+  name: string;
+  cityIds: string[];
+}
+
+interface LocationHierarchyResult {
+  resolvedType: LocationType;
+  resolvedName: string;
+  requestedId: string;
+  levels: LocationLevel[];
+}
+
 type CacheEntry<T> = {
   expiresAt: number;
   value: T;
@@ -35,22 +51,6 @@ const getLocationCache = () => {
 
   return globalRef.__locationHierarchyCache;
 };
-
-type LocationType = 'city' | 'region' | 'country';
-
-interface LocationLevel {
-  type: LocationType;
-  id: string;
-  name: string;
-  cityIds: string[];
-}
-
-interface LocationHierarchyResult {
-  resolvedType: LocationType;
-  resolvedName: string;
-  requestedId: string;
-  levels: LocationLevel[];
-}
 
 const uniqueCityIds = (ids: (string | null | undefined)[]): string[] =>
   Array.from(new Set(ids.filter(Boolean) as string[]));
@@ -270,18 +270,18 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       typeof locationType === 'string' ? locationType : undefined;
 
     const includeConfig: any = {
-      category: true,
-      city: {
-        include: { region: true },
-      },
-      user: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          email: true,
+        category: true,
+        city: {
+          include: { region: true },
         },
-      },
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
     };
 
     const buildWhereWithCityIds = (cityIds?: string[]) => {
@@ -301,23 +301,37 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       );
     }
 
-    let appliedLocationLevel: LocationLevel | null = null;
-    let whereClause = buildWhereWithCityIds();
+    const locationCandidates: { where: any; level: LocationLevel | null }[] = [];
 
     if (locationHierarchy && locationHierarchy.levels.length > 0) {
       for (const level of locationHierarchy.levels) {
-        if (!level.cityIds.length) {
-          continue;
-        }
-        const candidateWhere = buildWhereWithCityIds(level.cityIds);
-        const count = await prisma.business.count({ where: candidateWhere });
-        if (count > 0) {
-          appliedLocationLevel = level;
-          whereClause = candidateWhere;
-          break;
-        }
+        if (!level.cityIds.length) continue;
+        locationCandidates.push({
+          where: buildWhereWithCityIds(level.cityIds),
+          level,
+        });
       }
     }
+
+    locationCandidates.push({
+      where: buildWhereWithCityIds(),
+      level: null,
+    });
+
+    const counts = await Promise.all(
+      locationCandidates.map((candidate) =>
+        prisma.business.count({ where: candidate.where })
+      )
+    );
+
+    let selectedIndex = counts.findIndex((count) => count > 0);
+    if (selectedIndex === -1) {
+      selectedIndex = 0;
+    }
+
+    const selectedCandidate = locationCandidates[selectedIndex];
+    const appliedLocationLevel = selectedCandidate.level;
+    const whereClause = selectedCandidate.where;
 
     const sortOption = typeof sortBy === 'string' ? sortBy : 'newest';
 
@@ -360,15 +374,17 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       }
     };
 
-    const total = await prisma.business.count({ where: whereClause });
+    const total = counts[selectedIndex];
 
-    const rawBusinesses = await prisma.business.findMany({
-      where: whereClause,
-      include: includeConfig,
-      orderBy: buildOrderBy(sortOption),
-      skip,
-      take: parseInt(limit as string),
-    });
+    const rawBusinesses = total
+      ? await prisma.business.findMany({
+          where: whereClause,
+          include: includeConfig,
+          orderBy: buildOrderBy(sortOption),
+          skip,
+          take: parseInt(limit as string),
+        })
+      : [];
 
     const resultBusinesses = rawBusinesses;
 
@@ -1157,29 +1173,29 @@ export const getFeaturedBusinesses = async (req: Request, res: Response) => {
       typeof locationType === 'string' ? locationType : undefined;
 
     const includeConfig = {
-      category: {
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-          icon: true,
+        category: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            icon: true,
+          },
         },
-      },
-      city: {
-        select: {
-          id: true,
-          name: true,
-          slug: true,
+        city: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
         },
-      },
-      user: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          avatar: true,
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            avatar: true,
+          },
         },
-      },
     };
 
     const buildWhereWithCityIds = (cityIds?: string[]) => {
@@ -1195,13 +1211,13 @@ export const getFeaturedBusinesses = async (req: Request, res: Response) => {
       prisma.business.findMany({
         where: buildWhereWithCityIds(cityIds),
         include: includeConfig,
-        orderBy: [
-          { averageRating: 'desc' },
-          { totalReviews: 'desc' },
-          { createdAt: 'desc' },
-        ],
-        take: parseInt(limit as string),
-      });
+      orderBy: [
+        { averageRating: 'desc' },
+        { totalReviews: 'desc' },
+        { createdAt: 'desc' },
+      ],
+      take: parseInt(limit as string),
+    });
 
     let locationHierarchy: LocationHierarchyResult | null = null;
     if (resolvedLocationId) {

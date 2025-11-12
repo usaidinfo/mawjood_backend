@@ -20,85 +20,121 @@ export const getDashboardAnalytics = async (req: AuthRequest, res: Response) => 
 
     const businessIds = userBusinesses.map(b => b.id);
 
-    const activeListings = await prisma.business.count({
-      where: { 
-        userId,
-        status: 'APPROVED'
-      }
-    });
+    if (!businessIds.length) {
+      return res.json({
+        success: true,
+        data: {
+          overview: {
+            totalListings: 0,
+            activeListings: 0,
+            pendingListings: 0,
+            totalViews: 0,
+            todayViews: 0,
+            totalReviews: 0,
+            averageRating: 0,
+            totalFavourites: 0,
+            totalBlogs: 0,
+          },
+          viewsTrend: [],
+          recentReviews: [],
+        },
+      });
+    }
 
-    // Total Listings
-    const totalListings = await prisma.business.count({
-      where: { userId }
-    });
-
-    // Pending Listings
-    const pendingListings = await prisma.business.count({
-      where: { 
-        userId,
-        status: 'PENDING'
-      }
-    });
-
-    // Total Views (across all businesses)
-    const totalViews = await prisma.businessView.count({
-      where: {
-        businessId: { in: businessIds }
-      }
-    });
-
-    // Today's Views
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    
-    const todayViews = await prisma.businessView.count({
-      where: {
-        businessId: { in: businessIds },
-        viewedAt: { gte: todayStart }
-      }
-    });
 
-    // Total Reviews
-    const totalReviews = await prisma.review.count({
-      where: {
-        businessId: { in: businessIds }
-      }
-    });
-
-    // Average Rating
-    const businesses = await prisma.business.findMany({
-      where: { userId },
-      select: { averageRating: true }
-    });
-    
-    const avgRating = businesses.length > 0
-      ? businesses.reduce((sum, b) => sum + b.averageRating, 0) / businesses.length
-      : 0;
-    
-    // Total Favourites
-    const totalFavourites = await prisma.favourite.count({
-      where: {
-        businessId: { in: businessIds }
-      }
-    });
-
-    // Total Blogs (if user is admin)
-    const totalBlogs = await prisma.blog.count({
-      where: { authorId: userId }
-    });
-
-    // Last 7 days views trend
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    
-    const last7DaysData = await prisma.businessView.groupBy({
-      by: ['viewedAt'],
-      where: {
-        businessId: { in: businessIds },
-        viewedAt: { gte: sevenDaysAgo }
-      },
-      _count: true
-    });
+
+    const [
+      activeListings,
+      totalListings,
+      pendingListings,
+      totalViews,
+      todayViews,
+      totalReviews,
+      totalFavourites,
+      totalBlogs,
+      ratingAgg,
+      last7DaysData,
+      recentReviews,
+    ] = await Promise.all([
+      prisma.business.count({
+        where: {
+          userId,
+          status: 'APPROVED',
+        },
+      }),
+      prisma.business.count({
+        where: { userId },
+      }),
+      prisma.business.count({
+        where: {
+          userId,
+          status: 'PENDING',
+        },
+      }),
+      prisma.businessView.count({
+        where: {
+          businessId: { in: businessIds },
+        },
+      }),
+      prisma.businessView.count({
+        where: {
+          businessId: { in: businessIds },
+          viewedAt: { gte: todayStart },
+        },
+      }),
+      prisma.review.count({
+        where: {
+          businessId: { in: businessIds },
+        },
+      }),
+      prisma.favourite.count({
+        where: {
+          businessId: { in: businessIds },
+        },
+      }),
+      prisma.blog.count({
+        where: { authorId: userId },
+      }),
+      prisma.business.aggregate({
+        where: { userId },
+        _avg: { averageRating: true },
+      }),
+      prisma.businessView.groupBy({
+        by: ['viewedAt'],
+        where: {
+          businessId: { in: businessIds },
+          viewedAt: { gte: sevenDaysAgo },
+        },
+        _count: true,
+      }),
+      prisma.review.findMany({
+        where: {
+          businessId: { in: businessIds },
+        },
+        take: 5,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          user: {
+            select: {
+              firstName: true,
+              lastName: true,
+              avatar: true,
+            },
+          },
+          business: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    const avgRating = ratingAgg._avg?.averageRating || 0;
 
     const last7Days = [];
     for (let i = 6; i >= 0; i--) {
@@ -115,29 +151,6 @@ export const getDashboardAnalytics = async (req: AuthRequest, res: Response) => 
         count: dayViews.length
       });
     }
-
-    // Recent Reviews
-    const recentReviews = await prisma.review.findMany({
-      where: {
-        businessId: { in: businessIds }
-      },
-      take: 5,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        user: {
-          select: {
-            firstName: true,
-            lastName: true,
-            avatar: true
-          }
-        },
-        business: {
-          select: {
-            name: true
-          }
-        }
-      }
-    });
 
     return res.json({
       success: true,
@@ -194,34 +207,31 @@ export const getBusinessAnalytics = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Total views
-    const totalViews = await prisma.businessView.count({
-      where: { businessId: id }
-    });
-
-    // Today's views
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    
-    const todayViews = await prisma.businessView.count({
-      where: {
-        businessId: id,
-        viewedAt: { gte: todayStart }
-      }
-    });
 
-    // Last 30 days views
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
-    const last30DaysData = await prisma.businessView.groupBy({
-      by: ['viewedAt'],
-      where: {
-        businessId: id,
-        viewedAt: { gte: thirtyDaysAgo }
-      },
-      _count: true
-    });
+
+    const [totalViews, todayViews, last30DaysData] = await Promise.all([
+      prisma.businessView.count({
+        where: { businessId: id },
+      }),
+      prisma.businessView.count({
+        where: {
+          businessId: id,
+          viewedAt: { gte: todayStart },
+        },
+      }),
+      prisma.businessView.groupBy({
+        by: ['viewedAt'],
+        where: {
+          businessId: id,
+          viewedAt: { gte: thirtyDaysAgo },
+        },
+        _count: true,
+      }),
+    ]);
 
     const last30Days = [];
     for (let i = 29; i >= 0; i--) {
