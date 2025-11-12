@@ -4,27 +4,48 @@ import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest } from '../types';
 import { uploadToCloudinary } from '../config/cloudinary';
 
+const prismaClient = prisma as any;
 // Get all published blogs
 export const getAllBlogs = async (req: Request, res: Response) => {
   try {
-    const { page = '1', limit = '10', search, tag } = req.query;
+    const {
+      page = '1',
+      limit = '10',
+      search,
+      categorySlug,
+      categoryId,
+    } = req.query;
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
 
     const where: any = { published: true };
 
     if (search) {
-      where.OR = [
-        { title: { contains: search as string } },
-        { content: { contains: search as string } },
-      ];
+      const searchTerm = (search as string).trim();
+      if (searchTerm.length) {
+        where.OR = [
+          { title: { contains: searchTerm } },
+          { content: { contains: searchTerm } },
+          { metaTitle: { contains: searchTerm } },
+          { metaDescription: { contains: searchTerm } },
+        ];
+      }
     }
 
-    // if (tag) {
-    //   where.tags = { has: tag as string };
-    // }
+    const normalizedCategorySlug = typeof categorySlug === 'string' ? categorySlug.trim() : null;
+    const normalizedCategoryId = typeof categoryId === 'string' ? categoryId.trim() : null;
+
+    if (normalizedCategorySlug) {
+      where.categories = {
+        some: { slug: normalizedCategorySlug },
+      };
+    } else if (normalizedCategoryId) {
+      where.categories = {
+        some: { id: normalizedCategoryId },
+      };
+    }
 
     const [blogs, total] = await Promise.all([
-      prisma.blog.findMany({
+      prismaClient.blog.findMany({
         where,
         include: {
           author: {
@@ -35,12 +56,20 @@ export const getAllBlogs = async (req: Request, res: Response) => {
               avatar: true,
             },
           },
+          categories: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              description: true,
+            },
+          },
         },
         skip,
         take: parseInt(limit as string),
         orderBy: { createdAt: 'desc' },
       }),
-      prisma.blog.count({ where }),
+      prismaClient.blog.count({ where }),
     ]);
 
     return sendSuccess(res, 200, 'Blogs fetched successfully', {
@@ -63,7 +92,7 @@ export const getBlogById = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const blog = await prisma.blog.findUnique({
+    const blog = await prismaClient.blog.findUnique({
       where: { id },
       include: {
         author: {
@@ -72,6 +101,14 @@ export const getBlogById = async (req: Request, res: Response) => {
             firstName: true,
             lastName: true,
             avatar: true,
+          },
+        },
+        categories: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            description: true,
           },
         },
       },
@@ -98,7 +135,7 @@ export const getBlogBySlug = async (req: Request, res: Response) => {
   try {
     const { slug } = req.params;
 
-    const blog = await prisma.blog.findUnique({
+    const blog = await prismaClient.blog.findUnique({
       where: { slug },
       include: {
         author: {
@@ -107,6 +144,14 @@ export const getBlogBySlug = async (req: Request, res: Response) => {
             firstName: true,
             lastName: true,
             avatar: true,
+          },
+        },
+        categories: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            description: true,
           },
         },
       },
@@ -131,13 +176,42 @@ export const getBlogBySlug = async (req: Request, res: Response) => {
 export const createBlog = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.userId;
-    const { title, slug, content, metaTitle, metaDescription, tags, published } = req.body;
+    const {
+      title,
+      slug,
+      content,
+      metaTitle,
+      metaDescription,
+      tags,
+      published,
+      categoryIds,
+    } = req.body;
 
     if (!title || !slug || !content) {
       return sendError(res, 400, 'Title, slug, and content are required');
     }
 
-    const existingBlog = await prisma.blog.findUnique({
+    let parsedCategoryIds: string[] = [];
+    if (categoryIds) {
+      try {
+        const payload = JSON.parse(categoryIds);
+        if (Array.isArray(payload)) {
+          parsedCategoryIds = payload
+            .filter((id: unknown) => typeof id === 'string' && id.trim().length > 0)
+            .map((id: string) => id.trim());
+        } else {
+          return sendError(res, 400, 'categoryIds must be an array of strings');
+        }
+      } catch (err) {
+        return sendError(res, 400, 'Invalid categoryIds format. Expected JSON array of IDs');
+      }
+    }
+
+    if (!parsedCategoryIds.length) {
+      return sendError(res, 400, 'Please select at least one category for the blog');
+    }
+
+    const existingBlog = await prismaClient.blog.findUnique({
       where: { slug },
     });
 
@@ -150,7 +224,7 @@ export const createBlog = async (req: AuthRequest, res: Response) => {
       image = await uploadToCloudinary(req.file, 'blogs');
     }
 
-    const blog = await prisma.blog.create({
+    const blog = await prismaClient.blog.create({
       data: {
         title,
         slug,
@@ -161,6 +235,9 @@ export const createBlog = async (req: AuthRequest, res: Response) => {
         tags: tags ? JSON.parse(tags) : null,
         published: published === 'true',
         authorId: userId!,
+        categories: {
+          connect: parsedCategoryIds.map((id) => ({ id })),
+        },
       },
       include: {
         author: {
@@ -169,6 +246,14 @@ export const createBlog = async (req: AuthRequest, res: Response) => {
             firstName: true,
             lastName: true,
             avatar: true,
+          },
+        },
+        categories: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            description: true,
           },
         },
       },
@@ -184,7 +269,16 @@ export const createBlog = async (req: AuthRequest, res: Response) => {
 export const updateBlog = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const { title, slug, content, metaTitle, metaDescription, tags, published } = req.body;
+    const {
+      title,
+      slug,
+      content,
+      metaTitle,
+      metaDescription,
+      tags,
+      published,
+      categoryIds,
+    } = req.body;
 
     const updateData: any = {};
     if (title) updateData.title = title;
@@ -195,11 +289,35 @@ export const updateBlog = async (req: AuthRequest, res: Response) => {
     if (tags) updateData.tags = JSON.parse(tags);
     if (published !== undefined) updateData.published = published === 'true';
 
+    let parsedCategoryIds: string[] | undefined;
+    if (categoryIds !== undefined) {
+      try {
+        const payload = JSON.parse(categoryIds);
+        if (Array.isArray(payload)) {
+          parsedCategoryIds = payload
+            .filter((catId: unknown) => typeof catId === 'string' && catId.trim().length > 0)
+            .map((catId: string) => catId.trim());
+        } else {
+          return sendError(res, 400, 'categoryIds must be an array of strings');
+        }
+      } catch (err) {
+        return sendError(res, 400, 'Invalid categoryIds format. Expected JSON array of IDs');
+      }
+
+      if (!parsedCategoryIds.length) {
+        return sendError(res, 400, 'Please select at least one category for the blog');
+      }
+
+      updateData.categories = {
+        set: parsedCategoryIds.map((catId) => ({ id: catId })),
+      };
+    }
+
     if (req.file) {
       updateData.image = await uploadToCloudinary(req.file, 'blogs');
     }
 
-    const blog = await prisma.blog.update({
+    const blog = await prismaClient.blog.update({
       where: { id },
       data: updateData,
       include: {
@@ -209,6 +327,14 @@ export const updateBlog = async (req: AuthRequest, res: Response) => {
             firstName: true,
             lastName: true,
             avatar: true,
+          },
+        },
+        categories: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            description: true,
           },
         },
       },
@@ -244,7 +370,7 @@ export const getAllBlogsAdmin = async (req: Request, res: Response) => {
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
 
     const [blogs, total] = await Promise.all([
-      prisma.blog.findMany({
+      prismaClient.blog.findMany({
         include: {
           author: {
             select: {
@@ -254,12 +380,20 @@ export const getAllBlogsAdmin = async (req: Request, res: Response) => {
               avatar: true,
             },
           },
+          categories: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              description: true,
+            },
+          },
         },
         skip,
         take: parseInt(limit as string),
         orderBy: { createdAt: 'desc' },
       }),
-      prisma.blog.count(),
+      prismaClient.blog.count(),
     ]);
 
     return sendSuccess(res, 200, 'All blogs fetched successfully', {

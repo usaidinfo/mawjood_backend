@@ -11,10 +11,16 @@ import reviewRoutes from './routes/review.routes';
 import userRoutes from './routes/user.routes';
 import paymentRoutes from './routes/payment.routes';
 import blogRoutes from './routes/blog.routes';
+import blogCategoryRoutes from './routes/blogCategory.routes';
 import adminRoutes from './routes/admin.routes';
 import uploadRoutes from './routes/upload.routes';
 import analyticsRoutes from './routes/analytics.routes';
+import settingsRoutes from './routes/settings.routes';
 import notificationRoutes from './routes/notification.routes';
+import advertisementRoutes from './routes/advertisement.routes';
+import subscriptionPlanRoutes from './routes/subscriptionPlan.routes';
+import subscriptionRoutes from './routes/subscription.routes';
+import sitemapRoutes from './routes/sitemap.routes';
 
 // Import routes
 import authRoutes from './routes/auth.routes';
@@ -38,12 +44,12 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later',
-});
-app.use('/api', limiter);
+// const limiter = rateLimit({
+//   windowMs: 15 * 60 * 1000, // 15 minutes
+//   max: 100, // limit each IP to 100 requests per windowMs
+//   message: 'Too many requests from this IP, please try again later',
+// });
+// app.use('/api', limiter);
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -53,11 +59,17 @@ app.use('/api/businesses', businessRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/blog-categories', blogCategoryRoutes);
 app.use('/api/blogs', blogRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/advertisements', advertisementRoutes);
+app.use('/api/subscription-plans', subscriptionPlanRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
+app.use('/', sitemapRoutes);
 
 // Health check
 app.get('/health', (_req, res) => {

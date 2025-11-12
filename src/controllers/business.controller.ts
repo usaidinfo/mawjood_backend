@@ -18,6 +18,206 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * c;
 };
 
+type LocationType = 'city' | 'region' | 'country';
+
+interface LocationLevel {
+  type: LocationType;
+  id: string;
+  name: string;
+  cityIds: string[];
+}
+
+interface LocationHierarchyResult {
+  resolvedType: LocationType;
+  resolvedName: string;
+  requestedId: string;
+  levels: LocationLevel[];
+}
+
+const uniqueCityIds = (ids: (string | null | undefined)[]): string[] =>
+  Array.from(new Set(ids.filter(Boolean) as string[]));
+
+const normaliseLocationType = (value?: string): LocationType | undefined => {
+  if (value === 'city' || value === 'region' || value === 'country') {
+    return value;
+  }
+  return undefined;
+};
+
+const prismaClient = prisma as any;
+
+const fetchRegionCityIds = async (regionId: string): Promise<string[]> => {
+  const cities = await prismaClient.city.findMany({
+    where: { regionId },
+    select: { id: true },
+  });
+  return uniqueCityIds(cities.map((c) => c.id));
+};
+
+const buildCountryLevel = async (countryId: string): Promise<LocationLevel | null> => {
+  const country = await prismaClient.country.findUnique({
+    where: { id: countryId },
+    select: {
+      id: true,
+      name: true,
+    },
+  });
+
+  if (!country) {
+    return null;
+  }
+
+  const countryCities = await prismaClient.city.findMany({
+    where: {
+      region: {
+        countryId,
+      },
+    },
+    select: { id: true },
+  });
+
+  const cityIds = uniqueCityIds(countryCities.map((c) => c.id));
+  if (!cityIds.length) {
+    return null;
+  }
+
+  return {
+    type: 'country',
+    id: country.id,
+    name: country.name,
+    cityIds,
+  };
+};
+
+const resolveLocationHierarchy = async (
+  locationId: string,
+  locationType?: string
+): Promise<LocationHierarchyResult | null> => {
+  const requestedType = normaliseLocationType(locationType);
+
+  if (!requestedType || requestedType === 'city') {
+    const city = await prismaClient.city.findUnique({
+      where: { id: locationId },
+      select: {
+        id: true,
+        name: true,
+        regionId: true,
+      },
+    });
+
+    if (city) {
+      const levels: LocationLevel[] = [
+        {
+          type: 'city',
+          id: city.id,
+          name: city.name,
+          cityIds: [city.id],
+        },
+      ];
+
+      if (city.regionId) {
+        const region = await prismaClient.region.findUnique({
+          where: { id: city.regionId },
+          select: {
+            id: true,
+            name: true,
+            countryId: true,
+          },
+        });
+
+        if (region) {
+          const regionCityIds = await fetchRegionCityIds(region.id);
+          if (regionCityIds.length > 0) {
+            levels.push({
+              type: 'region',
+              id: region.id,
+              name: region.name,
+              cityIds: regionCityIds,
+            });
+          }
+
+          if (region.countryId) {
+            const countryLevel = await buildCountryLevel(region.countryId);
+            if (countryLevel) {
+              levels.push(countryLevel);
+            }
+          }
+        }
+      }
+
+      return {
+        resolvedType: 'city',
+        resolvedName: city.name,
+        requestedId: city.id,
+        levels,
+      };
+    }
+  }
+
+  if (!requestedType || requestedType === 'region') {
+    const region = await prismaClient.region.findUnique({
+      where: { id: locationId },
+      select: {
+        id: true,
+        name: true,
+        countryId: true,
+      },
+    });
+
+    if (region) {
+      const levels: LocationLevel[] = [];
+      const regionCityIds = await fetchRegionCityIds(region.id);
+      if (regionCityIds.length > 0) {
+        levels.push({
+          type: 'region',
+          id: region.id,
+          name: region.name,
+          cityIds: regionCityIds,
+        });
+      }
+
+      if (region.countryId) {
+        const countryLevel = await buildCountryLevel(region.countryId);
+        if (countryLevel) {
+          levels.push(countryLevel);
+        }
+      }
+
+      return {
+        resolvedType: 'region',
+        resolvedName: region.name,
+        requestedId: region.id,
+        levels,
+      };
+    }
+  }
+
+  if (!requestedType || requestedType === 'country') {
+    const country = await prismaClient.country.findUnique({
+      where: { id: locationId },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    if (country) {
+      const countryLevel = await buildCountryLevel(country.id);
+
+      if (countryLevel) {
+        return {
+          resolvedType: 'country',
+          resolvedName: country.name,
+          requestedId: country.id,
+          levels: [countryLevel],
+        };
+      }
+    }
+  }
+
+  return null;
+};
+
 export const getAllBusinesses = async (req: Request, res: Response) => {
   try {
     const {
@@ -25,67 +225,201 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       limit = '10',
       search,
       categoryId,
-      categoryIds, // ADD THIS LINE
+      categoryIds,
       cityId,
+      locationId,
+      locationType,
       status,
       isVerified,
       latitude,
       longitude,
       radius = '10',
-      sortBy = 'createdAt',
-      order = 'desc',
+      sortBy = 'newest',
+      rating,
     } = req.query;
 
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
 
-    const where: any = {
+    const baseWhere: any = {
       status: 'APPROVED',
     };
 
     if (search) {
-      where.OR = [
+      baseWhere.OR = [
         { name: { contains: search as string } },
         { description: { contains: search as string } },
       ];
     }
 
     if (categoryIds) {
-      const idsArray = typeof categoryIds === 'string' ? categoryIds.split(',') : categoryIds;
-      where.categoryId = { in: idsArray };
+      const idsArray =
+        typeof categoryIds === 'string' ? categoryIds.split(',') : categoryIds;
+      baseWhere.categoryId = { in: idsArray };
     } else if (categoryId) {
-      where.categoryId = categoryId;
-    }
-
-    if (cityId && typeof cityId === 'string' && cityId.trim().length > 0) {
-      where.cityId = cityId;
+      baseWhere.categoryId = categoryId;
     }
 
     if (status) {
-      where.status = status;
+      baseWhere.status = status;
     }
 
     if (isVerified !== undefined) {
-      where.isVerified = isVerified === 'true';
+      baseWhere.isVerified = isVerified === 'true';
     }
 
-    let businesses = await prisma.business.findMany({
-      where,
-      include: {
-        category: true,
-        city: {
-          include: { region: true },
-        },
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
+    const resolvedLocationId =
+      typeof locationId === 'string' && locationId.trim().length > 0
+        ? locationId
+        : typeof cityId === 'string' && cityId.trim().length > 0
+        ? cityId
+        : null;
+
+    const resolvedLocationType =
+      typeof locationType === 'string' ? locationType : undefined;
+
+    const includeConfig: any = {
+      category: true,
+      city: {
+        include: { region: true },
+      },
+      user: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
         },
       },
-      orderBy: { [sortBy as string]: order },
+      _count: {
+        select: {
+          views: true,
+        },
+      },
+    };
+
+    const buildWhereWithCityIds = (cityIds?: string[]) => {
+      const whereClause = { ...baseWhere };
+      if (cityIds && cityIds.length > 0) {
+        whereClause.cityId =
+          cityIds.length === 1 ? cityIds[0] : { in: Array.from(new Set(cityIds)) };
+      }
+      return whereClause;
+    };
+
+    const fetchBusinessesByCityIds = async (cityIds?: string[]) =>
+      prisma.business.findMany({
+        where: buildWhereWithCityIds(cityIds),
+        include: includeConfig,
+        orderBy: { createdAt: 'desc' },
+      });
+
+    let locationHierarchy: LocationHierarchyResult | null = null;
+    if (resolvedLocationId) {
+      locationHierarchy = await resolveLocationHierarchy(
+        resolvedLocationId,
+        resolvedLocationType
+      );
+    }
+
+    let appliedLocationLevel: LocationLevel | null = null;
+    const rawBusinesses =
+      locationHierarchy && locationHierarchy.levels.length > 0
+        ? await (async () => {
+            for (const level of locationHierarchy!.levels) {
+              if (!level.cityIds.length) {
+                continue;
+              }
+              const result = await fetchBusinessesByCityIds(level.cityIds);
+              if (result.length > 0) {
+                appliedLocationLevel = level;
+                return result;
+              }
+            }
+            return await fetchBusinessesByCityIds();
+          })()
+        : await fetchBusinessesByCityIds();
+
+    const businessesWithViews = rawBusinesses.map((business: any) => {
+      const { _count, ...rest } = business;
+      return {
+        ...rest,
+        viewCount: _count?.views ?? 0,
+      };
     });
+
+    const minRating =
+      typeof rating === 'string' && rating.trim().length
+        ? parseFloat(rating as string)
+        : undefined;
+
+    const filteredByRating =
+      minRating !== undefined && !Number.isNaN(minRating)
+        ? businessesWithViews.filter(
+            (business) => (business.averageRating ?? 0) >= minRating!
+          )
+        : businessesWithViews;
+
+    const sortOption = typeof sortBy === 'string' ? sortBy : 'newest';
+
+    const sortBusinesses = (list: any[], option: string) => {
+      const arr = [...list];
+      const getCreatedAt = (value: any) =>
+        value?.createdAt ? new Date(value.createdAt).getTime() : 0;
+      switch (option) {
+        case 'rating_high':
+          arr.sort(
+            (a, b) =>
+              (b.averageRating ?? 0) - (a.averageRating ?? 0) ||
+              getCreatedAt(b) - getCreatedAt(a)
+          );
+          break;
+        case 'rating_low':
+          arr.sort(
+            (a, b) =>
+              (a.averageRating ?? 0) - (b.averageRating ?? 0) ||
+              getCreatedAt(b) - getCreatedAt(a)
+          );
+          break;
+        case 'oldest':
+          arr.sort((a, b) => getCreatedAt(a) - getCreatedAt(b));
+          break;
+        case 'newest':
+          arr.sort((a, b) => getCreatedAt(b) - getCreatedAt(a));
+          break;
+        case 'verified':
+          arr.sort(
+            (a, b) =>
+              Number(b.isVerified) - Number(a.isVerified) ||
+              getCreatedAt(b) - getCreatedAt(a)
+          );
+          break;
+        case 'not_verified':
+          arr.sort(
+            (a, b) =>
+              Number(a.isVerified) - Number(b.isVerified) ||
+              getCreatedAt(b) - getCreatedAt(a)
+          );
+          break;
+        case 'popular':
+          arr.sort(
+            (a, b) =>
+              (b.viewCount ?? 0) - (a.viewCount ?? 0) ||
+              getCreatedAt(b) - getCreatedAt(a)
+          );
+          break;
+        case 'name_asc':
+          arr.sort((a, b) => a.name.localeCompare(b.name));
+          break;
+        case 'name_desc':
+          arr.sort((a, b) => b.name.localeCompare(a.name));
+          break;
+        default:
+          arr.sort((a, b) => getCreatedAt(b) - getCreatedAt(a));
+      }
+      return arr;
+    };
+
+    const sortedBusinesses = sortBusinesses(filteredByRating, sortOption);
 
     // Location-based filtering
     if (latitude && longitude) {
@@ -93,7 +427,10 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       const userLon = parseFloat(longitude as string);
       const maxRadius = parseFloat(radius as string);
 
-      businesses = businesses
+      sortedBusinesses.splice(
+        0,
+        sortedBusinesses.length,
+        ...sortedBusinesses
         .map((business) => {
           if (business.latitude && business.longitude) {
             const distance = calculateDistance(
@@ -106,18 +443,44 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
           }
           return { ...business, distance: null };
         })
-        .filter((business) => business.distance === null || business.distance <= maxRadius)
+        .filter(
+          (business) => business.distance === null || business.distance <= maxRadius
+        )
         .sort((a, b) => {
           if (a.distance === null) return 1;
           if (b.distance === null) return -1;
           return a.distance - b.distance;
-        });
+        })
+      );
     }
 
-    const total = businesses.length;
-    const paginatedBusinesses = businesses.slice(skip, skip + parseInt(limit as string));
+    const total = sortedBusinesses.length;
+    const paginatedBusinesses = sortedBusinesses.slice(
+      skip,
+      skip + parseInt(limit as string)
+    );
 
-    return sendSuccess(res, 200, 'Businesses fetched successfully', {
+    const locationContext = locationHierarchy
+      ? {
+          requested: {
+            id: locationHierarchy.requestedId,
+            type: locationHierarchy.resolvedType,
+            name: locationHierarchy.resolvedName,
+          },
+          applied: appliedLocationLevel
+            ? {
+                id: appliedLocationLevel.id,
+                type: appliedLocationLevel.type,
+                name: appliedLocationLevel.name,
+              }
+            : null,
+          fallbackApplied:
+            !!appliedLocationLevel &&
+            appliedLocationLevel.type !== locationHierarchy.resolvedType,
+        }
+      : undefined;
+
+    const responsePayload: any = {
       businesses: paginatedBusinesses,
       pagination: {
         total,
@@ -125,7 +488,13 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
         limit: parseInt(limit as string),
         totalPages: Math.ceil(total / parseInt(limit as string)),
       },
-    });
+    };
+
+    if (locationContext) {
+      responsePayload.locationContext = locationContext;
+    }
+
+    return sendSuccess(res, 200, 'Businesses fetched successfully', responsePayload);
   } catch (error) {
     console.error('Get businesses error:', error);
     return sendError(res, 500, 'Failed to fetch businesses', error);
@@ -835,54 +1204,120 @@ export const unifiedSearch = async (req: Request, res: Response) => {
 // Get featured/trending businesses
 export const getFeaturedBusinesses = async (req: Request, res: Response) => {
   try {
-    const { limit = '8', cityId } = req.query;
+    const { limit = '8', cityId, locationId, locationType } = req.query;
 
-    const where: any = {
+    const baseWhere: any = {
       status: 'APPROVED',
       isVerified: true,
     };
 
-    if (cityId) {
-      where.cityId = cityId;
-    }
+    const resolvedLocationId =
+      typeof locationId === 'string' && locationId.trim().length > 0
+        ? locationId
+        : typeof cityId === 'string' && cityId.trim().length > 0
+        ? cityId
+        : null;
 
-    // Get businesses with high ratings and reviews
-    const businesses = await prisma.business.findMany({
-      where,
-      include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            icon: true,
-          },
-        },
-        city: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
-        },
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            avatar: true,
-          },
+    const resolvedLocationType =
+      typeof locationType === 'string' ? locationType : undefined;
+
+    const includeConfig = {
+      category: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          icon: true,
         },
       },
-      orderBy: [
-        { averageRating: 'desc' },
-        { totalReviews: 'desc' },
-        { createdAt: 'desc' },
-      ],
-      take: parseInt(limit as string),
-    });
+      city: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+        },
+      },
+      user: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          avatar: true,
+        },
+      },
+    };
 
-    return sendSuccess(res, 200, 'Featured businesses fetched successfully', businesses);
+    const buildWhereWithCityIds = (cityIds?: string[]) => {
+      const whereClause = { ...baseWhere };
+      if (cityIds && cityIds.length > 0) {
+        whereClause.cityId =
+          cityIds.length === 1 ? cityIds[0] : { in: Array.from(new Set(cityIds)) };
+      }
+      return whereClause;
+    };
+
+    const fetchFeaturedByCityIds = async (cityIds?: string[]) =>
+      prisma.business.findMany({
+        where: buildWhereWithCityIds(cityIds),
+        include: includeConfig,
+        orderBy: [
+          { averageRating: 'desc' },
+          { totalReviews: 'desc' },
+          { createdAt: 'desc' },
+        ],
+        take: parseInt(limit as string),
+      });
+
+    let locationHierarchy: LocationHierarchyResult | null = null;
+    if (resolvedLocationId) {
+      locationHierarchy = await resolveLocationHierarchy(
+        resolvedLocationId,
+        resolvedLocationType
+      );
+    }
+
+    let appliedLocationLevel: LocationLevel | null = null;
+    const businesses =
+      locationHierarchy && locationHierarchy.levels.length > 0
+        ? await (async () => {
+            for (const level of locationHierarchy!.levels) {
+              if (!level.cityIds.length) {
+                continue;
+              }
+              const result = await fetchFeaturedByCityIds(level.cityIds);
+              if (result.length > 0) {
+                appliedLocationLevel = level;
+                return result;
+              }
+            }
+            return await fetchFeaturedByCityIds();
+          })()
+        : await fetchFeaturedByCityIds();
+
+    const locationContext = locationHierarchy
+      ? {
+          requested: {
+            id: locationHierarchy.requestedId,
+            type: locationHierarchy.resolvedType,
+            name: locationHierarchy.resolvedName,
+          },
+          applied: appliedLocationLevel
+            ? {
+                id: appliedLocationLevel.id,
+                type: appliedLocationLevel.type,
+                name: appliedLocationLevel.name,
+              }
+            : null,
+          fallbackApplied:
+            !!appliedLocationLevel &&
+            appliedLocationLevel.type !== locationHierarchy.resolvedType,
+        }
+      : undefined;
+
+    return sendSuccess(res, 200, 'Featured businesses fetched successfully', {
+      businesses,
+      ...(locationContext ? { locationContext } : {}),
+    });
   } catch (error) {
     console.error('Get featured businesses error:', error);
     return sendError(res, 500, 'Failed to fetch featured businesses', error);

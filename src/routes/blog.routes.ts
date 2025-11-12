@@ -15,13 +15,13 @@ const router = Router();
 
 // Public routes
 router.get('/', getAllBlogs);
-router.get('/:id', getBlogById);
 router.get('/slug/:slug', getBlogBySlug);
 
 // Admin routes
+router.get('/admin/all', authenticate, authorize('ADMIN'), getAllBlogsAdmin);
+router.get('/:id', authenticate, authorize('ADMIN'), getBlogById);
 router.post('/', authenticate, authorize('ADMIN'), upload.single('image'), createBlog);
 router.put('/:id', authenticate, authorize('ADMIN'), upload.single('image'), updateBlog);
 router.delete('/:id', authenticate, authorize('ADMIN'), deleteBlog);
-router.get('/admin/all', authenticate, authorize('ADMIN'), getAllBlogsAdmin);
 
 export default router;
