@@ -268,6 +268,17 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       baseWhere.isVerified = isVerified === 'true';
     }
 
+    const minRating =
+      typeof rating === 'string' && rating.trim().length
+        ? parseFloat(rating as string)
+        : undefined;
+
+    if (minRating !== undefined && !Number.isNaN(minRating)) {
+      baseWhere.averageRating = {
+        gte: minRating,
+      };
+    }
+
     const resolvedLocationId =
       typeof locationId === 'string' && locationId.trim().length > 0
         ? locationId
@@ -289,11 +300,6 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
           firstName: true,
           lastName: true,
           email: true,
-        },
-      },
-      _count: {
-        select: {
-          views: true,
         },
       },
     };
@@ -333,108 +339,82 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       }
     }
 
+    const sortOption = typeof sortBy === 'string' ? sortBy : 'newest';
+
+    const buildOrderBy = (option: string) => {
+      switch (option) {
+        case 'rating_high':
+          return [
+            { averageRating: 'desc' as const },
+            { createdAt: 'desc' as const },
+          ];
+        case 'rating_low':
+          return [
+            { averageRating: 'asc' as const },
+            { createdAt: 'desc' as const },
+          ];
+        case 'oldest':
+          return [{ createdAt: 'asc' as const }];
+        case 'verified':
+          return [
+            { isVerified: 'desc' as const },
+            { createdAt: 'desc' as const },
+          ];
+        case 'not_verified':
+          return [
+            { isVerified: 'asc' as const },
+            { createdAt: 'desc' as const },
+          ];
+        case 'popular':
+          return [
+            { views: { _count: 'desc' as const } },
+            { createdAt: 'desc' as const },
+          ];
+        case 'name_asc':
+          return [{ name: 'asc' as const }];
+        case 'name_desc':
+          return [{ name: 'desc' as const }];
+        default:
+          return [{ createdAt: 'desc' as const }];
+      }
+    };
+
     const total = await prisma.business.count({ where: whereClause });
 
     const rawBusinesses = await prisma.business.findMany({
       where: whereClause,
       include: includeConfig,
-      orderBy: { createdAt: 'desc' },
+      orderBy: buildOrderBy(sortOption),
       skip,
       take: parseInt(limit as string),
     });
 
-    const businessesWithViews = rawBusinesses.map((business: any) => {
-      const { _count, ...rest } = business;
-      return {
-        ...rest,
-        viewCount: _count?.views ?? 0,
-      };
-    });
+    const businessIds = rawBusinesses.map((business: any) => business.id);
 
-    const minRating =
-      typeof rating === 'string' && rating.trim().length
-        ? parseFloat(rating as string)
-        : undefined;
+    const viewCounts = businessIds.length
+      ? await prisma.businessView.groupBy({
+          by: ['businessId'],
+          where: { businessId: { in: businessIds } },
+          _count: { _all: true },
+        })
+      : [];
 
-    const filteredByRating =
-      minRating !== undefined && !Number.isNaN(minRating)
-        ? businessesWithViews.filter(
-            (business) => (business.averageRating ?? 0) >= minRating!
-          )
-        : businessesWithViews;
+    const viewCountMap = viewCounts.reduce<Record<string, number>>((acc, item) => {
+      acc[item.businessId] = item._count._all;
+      return acc;
+    }, {});
 
-    const sortOption = typeof sortBy === 'string' ? sortBy : 'newest';
+    let resultBusinesses = rawBusinesses.map((business: any) => ({
+      ...business,
+      viewCount: viewCountMap[business.id] ?? 0,
+    }));
 
-    const sortBusinesses = (list: any[], option: string) => {
-      const arr = [...list];
-      const getCreatedAt = (value: any) =>
-        value?.createdAt ? new Date(value.createdAt).getTime() : 0;
-      switch (option) {
-        case 'rating_high':
-          arr.sort(
-            (a, b) =>
-              (b.averageRating ?? 0) - (a.averageRating ?? 0) ||
-              getCreatedAt(b) - getCreatedAt(a)
-          );
-          break;
-        case 'rating_low':
-          arr.sort(
-            (a, b) =>
-              (a.averageRating ?? 0) - (b.averageRating ?? 0) ||
-              getCreatedAt(b) - getCreatedAt(a)
-          );
-          break;
-        case 'oldest':
-          arr.sort((a, b) => getCreatedAt(a) - getCreatedAt(b));
-          break;
-        case 'newest':
-          arr.sort((a, b) => getCreatedAt(b) - getCreatedAt(a));
-          break;
-        case 'verified':
-          arr.sort(
-            (a, b) =>
-              Number(b.isVerified) - Number(a.isVerified) ||
-              getCreatedAt(b) - getCreatedAt(a)
-          );
-          break;
-        case 'not_verified':
-          arr.sort(
-            (a, b) =>
-              Number(a.isVerified) - Number(b.isVerified) ||
-              getCreatedAt(b) - getCreatedAt(a)
-          );
-          break;
-        case 'popular':
-          arr.sort(
-            (a, b) =>
-              (b.viewCount ?? 0) - (a.viewCount ?? 0) ||
-              getCreatedAt(b) - getCreatedAt(a)
-          );
-          break;
-        case 'name_asc':
-          arr.sort((a, b) => a.name.localeCompare(b.name));
-          break;
-        case 'name_desc':
-          arr.sort((a, b) => b.name.localeCompare(a.name));
-          break;
-        default:
-          arr.sort((a, b) => getCreatedAt(b) - getCreatedAt(a));
-      }
-      return arr;
-    };
-
-    const sortedBusinesses = sortBusinesses(filteredByRating, sortOption);
-
-    // Location-based filtering
     if (latitude && longitude) {
       const userLat = parseFloat(latitude as string);
       const userLon = parseFloat(longitude as string);
       const maxRadius = parseFloat(radius as string);
 
-      sortedBusinesses.splice(
-        0,
-        sortedBusinesses.length,
-        ...sortedBusinesses
+      resultBusinesses = resultBusinesses
         .map((business) => {
           if (business.latitude && business.longitude) {
             const distance = calculateDistance(
@@ -454,8 +434,7 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
           if (a.distance === null) return 1;
           if (b.distance === null) return -1;
           return a.distance - b.distance;
-        })
-      );
+        });
     }
 
     const locationContext = locationHierarchy
@@ -479,7 +458,7 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       : undefined;
 
     const responsePayload: any = {
-      businesses: sortedBusinesses,
+      businesses: resultBusinesses,
       pagination: {
         total,
         page: parseInt(page as string),
