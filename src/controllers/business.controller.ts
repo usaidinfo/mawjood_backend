@@ -1211,13 +1211,13 @@ export const getFeaturedBusinesses = async (req: Request, res: Response) => {
       prisma.business.findMany({
         where: buildWhereWithCityIds(cityIds),
         include: includeConfig,
-      orderBy: [
-        { averageRating: 'desc' },
-        { totalReviews: 'desc' },
-        { createdAt: 'desc' },
-      ],
-      take: parseInt(limit as string),
-    });
+        orderBy: [
+          { averageRating: 'desc' },
+          { totalReviews: 'desc' },
+          { createdAt: 'desc' },
+        ],
+        take: parseInt(limit as string),
+      });
 
     let locationHierarchy: LocationHierarchyResult | null = null;
     if (resolvedLocationId) {
@@ -1418,8 +1418,8 @@ export const getMyBusinessesServices = async (req: AuthRequest, res: Response) =
       where: {
         userId,
         services: {
-          some: {}  // Only businesses that have at least one service
-        }
+          some: {}, // Only businesses that have at least one service
+        },
       },
       select: {
         id: true,
@@ -1427,10 +1427,10 @@ export const getMyBusinessesServices = async (req: AuthRequest, res: Response) =
         slug: true,
         logo: true,
         services: {
-          orderBy: { createdAt: 'desc' }
-        }
+          orderBy: { createdAt: 'desc' },
+        },
       },
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
     });
 
     return sendSuccess(res, 200, 'Services fetched successfully', businesses);
