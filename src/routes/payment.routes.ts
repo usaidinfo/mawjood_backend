@@ -23,4 +23,4 @@ router.post('/webhook/:paymentId', updatePaymentStatus);
 // Admin routes
 router.get('/admin/all', authenticate, authorize('ADMIN'), getAllPayments);
 
-export default router;
+export default router;  

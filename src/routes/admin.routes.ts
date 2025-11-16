@@ -9,6 +9,10 @@ import {
   getPendingBusinesses,
   suspendBusiness,
   getAnalytics,
+  getAllReviews,
+  getPendingDeleteRequests,
+  approveDeleteRequest,
+  rejectDeleteRequest,
 } from '../controllers/admin.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 
@@ -31,5 +35,11 @@ router.delete('/users/:id', deleteUser);
 // Business management
 router.get('/businesses/pending', getPendingBusinesses);
 router.patch('/businesses/:id/suspend', suspendBusiness);
+
+// Review management
+router.get('/reviews', getAllReviews);
+router.get('/reviews/pending-delete-requests', getPendingDeleteRequests);
+router.patch('/reviews/:id/approve-delete', approveDeleteRequest);
+router.patch('/reviews/:id/reject-delete', rejectDeleteRequest);
 
 export default router;

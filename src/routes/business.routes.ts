@@ -11,6 +11,7 @@ import {
   rejectBusiness,
   addService,
   getBusinessServices,
+  updateService,
   deleteService,
   getAllBusinessesAdmin,
   unifiedSearch,
@@ -59,7 +60,18 @@ router.put('/:id', authenticate,
   updateBusiness
 );
 router.delete('/:id', authenticate, deleteBusiness);
-router.post('/:businessId/services', authenticate, addService);
+router.post('/:businessId/services', authenticate, 
+  upload.fields([
+    { name: 'image', maxCount: 1 }
+  ]), 
+  addService
+);
+router.put('/services/:serviceId', authenticate,
+  upload.fields([
+    { name: 'image', maxCount: 1 }
+  ]),
+  updateService
+);
 router.delete('/services/:serviceId', authenticate, deleteService);
 
 

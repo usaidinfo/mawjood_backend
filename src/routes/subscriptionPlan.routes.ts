@@ -6,13 +6,17 @@ import {
   getSubscriptionPlans,
   updateSubscriptionPlan,
 } from '../controllers/subscriptionPlan.controller';
+import { authenticate, authorize } from '../middleware/auth.middleware';
 
 const router = Router();
 
+// Public routes (for businesses to view plans)
 router.get('/', getSubscriptionPlans);
 router.get('/:id', getSubscriptionPlanById);
-router.post('/', createSubscriptionPlan);
-router.patch('/:id', updateSubscriptionPlan);
-router.delete('/:id', archiveSubscriptionPlan);
+
+// Admin only routes
+router.post('/', authenticate, authorize('ADMIN'), createSubscriptionPlan);
+router.patch('/:id', authenticate, authorize('ADMIN'), updateSubscriptionPlan);
+router.delete('/:id', authenticate, authorize('ADMIN'), archiveSubscriptionPlan);
 
 export default router;

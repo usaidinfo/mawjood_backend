@@ -7,6 +7,7 @@ import {
   verifyEmailOTP,
   verifyPhoneOTP,
   getMe,
+  socialLogin,
 } from '../controllers/auth.controller';
 import { authenticate } from '../middleware/auth.middleware';
 
@@ -15,6 +16,7 @@ const router = Router();
 router.post('/register', register);
 
 router.post('/login/password', loginWithPassword);
+router.post('/login/social', socialLogin);
 
 router.post('/otp/send-email', sendEmailOTPController);
 router.post('/otp/send-phone', sendPhoneOTPController);

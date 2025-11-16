@@ -90,7 +90,8 @@ export const createReview = async (req: AuthRequest, res: Response) => {
         comment,
         userId: userId!,
         businessId,
-      },
+        deleteRequestStatus: null, // Explicitly set to null for new reviews
+      } as any,
       include: {
         user: {
           select: {
@@ -126,7 +127,7 @@ export const createReview = async (req: AuthRequest, res: Response) => {
           userId: business.userId,
           type: 'NEW_REVIEW',
           title: 'New Review Received! ⭐',
-          message: `${review.user.firstName} ${review.user.lastName} left a ${rating}-star review on "${business.name}"`,
+          message: `${(review as any).user.firstName} ${(review as any).user.lastName} left a ${rating}-star review on "${business.name}"`,
           link: `/businesses/${business.slug}`,
         },
       });
@@ -199,7 +200,7 @@ export const updateReview = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// Delete review
+// Request review deletion (sets deleteRequestStatus to PENDING)
 export const deleteReview = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
@@ -208,44 +209,34 @@ export const deleteReview = async (req: AuthRequest, res: Response) => {
 
     const existingReview = await prisma.review.findUnique({
       where: { id },
-    });
+    }) as any;
 
     if (!existingReview) {
       return sendError(res, 404, 'Review not found');
     }
 
-    // Only owner or admin can delete
-    if (existingReview.userId !== userId && userRole !== 'ADMIN') {
-      return sendError(res, 403, 'You are not authorized to delete this review');
+    // Only owner can request deletion (admin can delete directly via admin endpoint)
+    if (existingReview.userId !== userId) {
+      return sendError(res, 403, 'You are not authorized to request deletion of this review');
     }
 
-    await prisma.review.delete({
+    // If already has a pending request, don't allow another
+    if (existingReview.deleteRequestStatus === 'PENDING') {
+      return sendError(res, 400, 'Delete request already pending');
+    }
+
+    // Set delete request status to PENDING
+    await prisma.review.update({
       where: { id },
-    });
-
-    // Update business average rating
-    const reviews = await prisma.review.findMany({
-      where: { businessId: existingReview.businessId },
-      select: { rating: true },
-    });
-
-    const totalReviews = reviews.length;
-    const averageRating = totalReviews > 0 
-      ? reviews.reduce((acc, r) => acc + r.rating, 0) / totalReviews 
-      : 0;
-
-    await prisma.business.update({
-      where: { id: existingReview.businessId },
       data: {
-        averageRating: parseFloat(averageRating.toFixed(2)),
-        totalReviews,
-      },
+        deleteRequestStatus: 'PENDING',
+      } as any,
     });
 
-    return sendSuccess(res, 200, 'Review deleted successfully');
+    return sendSuccess(res, 200, 'Delete request submitted successfully. Admin will review your request.');
   } catch (error) {
-    console.error('Delete review error:', error);
-    return sendError(res, 500, 'Failed to delete review', error);
+    console.error('Request review deletion error:', error);
+    return sendError(res, 500, 'Failed to request review deletion', error);
   }
 };
 

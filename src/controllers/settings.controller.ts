@@ -5,6 +5,7 @@ import { sendSuccess, sendError } from '../utils/response.util';
 const SETTINGS_KEY = 'default';
 
 const DEFAULT_SITE_SETTINGS = {
+  currency: 'SAR',
   hero: {
     title: 'Discover & Connect Locally',
     subtitle: 'Find trusted businesses, services, and experiences across Saudi Arabia.',
@@ -301,6 +302,9 @@ export const updateSiteSettings = async (req: Request, res: Response) => {
     }
     if (Object.prototype.hasOwnProperty.call(payload, 'contact')) {
       data.contact = payload.contact;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'currency')) {
+      data.currency = payload.currency;
     }
 
     if (Object.keys(data).length === 0) {

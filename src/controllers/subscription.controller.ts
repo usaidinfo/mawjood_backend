@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import prisma from '../config/database';
 import { sendError, sendSuccess } from '../utils/response.util';
+import { AuthRequest } from '../types';
 
 const prismaClient = prisma as any;
 
@@ -41,8 +42,10 @@ const computeEndDate = (start: Date, interval: Interval, count: number, customDa
   return end;
 };
 
-export const createBusinessSubscription = async (req: Request, res: Response) => {
+export const createBusinessSubscription = async (req: AuthRequest, res: Response) => {
   try {
+    const userId = req.user?.userId;
+    const userRole = req.user?.role;
     const { businessId, planId, startDate, notes, paymentReference, paymentProvider, metadata } = req.body;
 
     if (!businessId || !planId) {
@@ -56,6 +59,11 @@ export const createBusinessSubscription = async (req: Request, res: Response) =>
 
     if (!business) {
       return sendError(res, 404, 'Business not found');
+    }
+
+    // Verify ownership (unless admin)
+    if (userRole !== 'ADMIN' && business.userId !== userId) {
+      return sendError(res, 403, 'You are not authorized to create subscriptions for this business');
     }
 
     if (!plan) {
@@ -87,7 +95,7 @@ export const createBusinessSubscription = async (req: Request, res: Response) =>
         paymentProvider,
         notes,
         metadata: metadata ?? null,
-        createdById: (req as any).user?.userId ?? null,
+        createdById: userId ?? null,
       },
     });
 
@@ -103,6 +111,17 @@ export const createBusinessSubscription = async (req: Request, res: Response) =>
       },
     });
 
+    // Create notification for subscription activation
+    await prismaClient.notification.create({
+      data: {
+        userId: business.userId,
+        type: 'SUBSCRIPTION_ACTIVATED',
+        title: 'Subscription Activated! 🎉',
+        message: `Your subscription to "${plan.name}" for "${business.name}" has been activated. ${plan.topPlacement ? 'Your business is now featured at the top of listings!' : ''} ${plan.verifiedBadge ? 'Your business is now verified!' : ''}`,
+        link: `/dashboard/subscriptions`,
+      },
+    });
+
     return sendSuccess(res, 201, 'Subscription created successfully', subscription);
   } catch (error) {
     console.error('Create business subscription error:', error);
@@ -110,15 +129,47 @@ export const createBusinessSubscription = async (req: Request, res: Response) =>
   }
 };
 
-export const getBusinessSubscriptions = async (req: Request, res: Response) => {
+export const getBusinessSubscriptions = async (req: AuthRequest, res: Response) => {
   try {
+    const userId = req.user?.userId;
+    const userRole = req.user?.role;
     const { businessId, status, page = '1', limit = '20' } = req.query;
     const skip = (parseInt(page as string, 10) - 1) * parseInt(limit as string, 10);
 
     const where: any = {};
+    
+    // If businessId is provided, verify ownership (unless admin)
     if (businessId) {
+      if (userRole !== 'ADMIN') {
+        const business = await prismaClient.business.findUnique({
+          where: { id: businessId as string },
+        });
+        if (!business || business.userId !== userId) {
+          return sendError(res, 403, 'You are not authorized to view subscriptions for this business');
+        }
+      }
       where.businessId = businessId;
+    } else if (userRole !== 'ADMIN') {
+      // If no businessId, only show subscriptions for user's businesses
+      const userBusinesses = await prismaClient.business.findMany({
+        where: { userId: userId! },
+        select: { id: true },
+      });
+      const businessIds = userBusinesses.map(b => b.id);
+      if (businessIds.length === 0) {
+        return sendSuccess(res, 200, 'Subscriptions fetched successfully', {
+          subscriptions: [],
+          pagination: {
+            total: 0,
+            page: parseInt(page as string, 10),
+            limit: parseInt(limit as string, 10),
+            totalPages: 0,
+          },
+        });
+      }
+      where.businessId = { in: businessIds };
     }
+    
     if (status) {
       where.status = status;
     }
@@ -128,6 +179,13 @@ export const getBusinessSubscriptions = async (req: Request, res: Response) => {
         where,
         include: {
           plan: true,
+          business: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -151,20 +209,34 @@ export const getBusinessSubscriptions = async (req: Request, res: Response) => {
   }
 };
 
-export const getBusinessSubscriptionById = async (req: Request, res: Response) => {
+export const getBusinessSubscriptionById = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
+    const userId = req.user?.userId;
+    const userRole = req.user?.role;
 
     const subscription = await prismaClient.businessSubscription.findUnique({
       where: { id },
       include: {
         plan: true,
-        business: { select: { id: true, name: true, slug: true } },
+        business: { 
+          select: { 
+            id: true, 
+            name: true, 
+            slug: true,
+            userId: true,
+          } 
+        },
       },
     });
 
     if (!subscription) {
       return sendError(res, 404, 'Subscription not found');
+    }
+
+    // Verify ownership (unless admin)
+    if (userRole !== 'ADMIN' && subscription.business.userId !== userId) {
+      return sendError(res, 403, 'You are not authorized to view this subscription');
     }
 
     return sendSuccess(res, 200, 'Subscription fetched successfully', subscription);
@@ -174,13 +246,38 @@ export const getBusinessSubscriptionById = async (req: Request, res: Response) =
   }
 };
 
-export const cancelBusinessSubscription = async (req: Request, res: Response) => {
+export const cancelBusinessSubscription = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
+    const userId = req.user?.userId;
+    const userRole = req.user?.role;
 
-    const subscription = await prismaClient.businessSubscription.findUnique({ where: { id } });
+    const subscription = await prismaClient.businessSubscription.findUnique({ 
+      where: { id },
+      include: {
+        business: {
+          select: {
+            id: true,
+            name: true,
+            userId: true,
+            currentSubscriptionId: true,
+          },
+        },
+        plan: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+    
     if (!subscription) {
       return sendError(res, 404, 'Subscription not found');
+    }
+
+    // Verify ownership (unless admin)
+    if (userRole !== 'ADMIN' && subscription.business.userId !== userId) {
+      return sendError(res, 403, 'You are not authorized to cancel this subscription');
     }
 
     if (subscription.status !== 'ACTIVE') {
@@ -195,9 +292,7 @@ export const cancelBusinessSubscription = async (req: Request, res: Response) =>
       },
     });
 
-    const business = await prismaClient.business.findUnique({ where: { id: subscription.businessId } });
-
-    if (business?.currentSubscriptionId === id) {
+    if (subscription.business.currentSubscriptionId === id) {
       await prismaClient.business.update({
         where: { id: subscription.businessId },
         data: {
@@ -206,6 +301,18 @@ export const cancelBusinessSubscription = async (req: Request, res: Response) =>
           canCreateAdvertisements: false,
           promotedUntil: null,
           isVerified: false,
+        },
+      });
+
+      // Create notification for subscription cancellation
+      const planName = subscription.plan?.name || 'subscription plan';
+      await prismaClient.notification.create({
+        data: {
+          userId: subscription.business.userId,
+          type: 'SUBSCRIPTION_CANCELLED',
+          title: 'Subscription Cancelled',
+          message: `Your subscription to "${planName}" for "${subscription.business.name}" has been cancelled. Your business will no longer be featured after the current period ends.`,
+          link: `/dashboard/subscriptions`,
         },
       });
     }
@@ -225,7 +332,20 @@ export const syncExpiredSubscriptions = async (_req: Request, res: Response) => 
         status: 'ACTIVE',
         endsAt: { lt: now },
       },
-      select: { id: true, businessId: true },
+      include: {
+        business: {
+          select: {
+            id: true,
+            name: true,
+            userId: true,
+          },
+        },
+        plan: {
+          select: {
+            name: true,
+          },
+        },
+      },
     });
 
     if (!expired.length) {
@@ -251,11 +371,194 @@ export const syncExpiredSubscriptions = async (_req: Request, res: Response) => 
       })
     );
 
-    await Promise.all(businessUpdates);
+    // Create notifications for expired subscriptions
+    const notifications = expired.map((item: any) =>
+      prismaClient.notification.create({
+        data: {
+          userId: item.business.userId,
+          type: 'SUBSCRIPTION_EXPIRED',
+          title: 'Subscription Expired',
+          message: `Your subscription to "${item.plan?.name || 'subscription plan'}" for "${item.business.name}" has expired. Your business is no longer featured. Renew your subscription to continue enjoying premium benefits.`,
+          link: `/dashboard/subscriptions`,
+        },
+      })
+    );
+
+    await Promise.all([...businessUpdates, ...notifications]);
 
     return sendSuccess(res, 200, 'Expired subscriptions synced successfully', { processed: expired.length });
   } catch (error) {
     console.error('Sync expired subscriptions error:', error);
     return sendError(res, 500, 'Failed to sync expired subscriptions', error);
+  }
+};
+
+// Check and notify about expiring subscriptions
+export const checkExpiringSubscriptions = async (_req: Request, res: Response) => {
+  try {
+    const now = new Date();
+    const sevenDaysFromNow = new Date(now);
+    sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
+    const threeDaysFromNow = new Date(now);
+    threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
+    const oneDayFromNow = new Date(now);
+    oneDayFromNow.setDate(oneDayFromNow.getDate() + 1);
+
+    const expiringSubscriptions = await prismaClient.businessSubscription.findMany({
+      where: {
+        status: 'ACTIVE',
+        endsAt: {
+          gte: now,
+          lte: sevenDaysFromNow,
+        },
+      },
+      include: {
+        business: {
+          select: {
+            id: true,
+            name: true,
+            userId: true,
+          },
+        },
+        plan: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+
+    if (!expiringSubscriptions.length) {
+      return sendSuccess(res, 200, 'No expiring subscriptions found', { processed: 0 });
+    }
+
+    const notifications = [];
+    const nowTime = now.getTime();
+
+    for (const subscription of expiringSubscriptions) {
+      const endsAtTime = new Date(subscription.endsAt).getTime();
+      const daysUntilExpiry = Math.ceil((endsAtTime - nowTime) / (1000 * 60 * 60 * 24));
+
+      // Check if notification already exists for this subscription
+      const existingNotification = await prismaClient.notification.findFirst({
+        where: {
+          userId: subscription.business.userId,
+          type: 'SUBSCRIPTION_EXPIRING',
+          message: {
+            contains: subscription.plan?.name || 'subscription plan',
+          },
+          createdAt: {
+            gte: new Date(now.getTime() - 24 * 60 * 60 * 1000), // Within last 24 hours
+          },
+        },
+      });
+
+      if (existingNotification) {
+        continue; // Skip if notification already sent recently
+      }
+
+      let title = '';
+      let message = '';
+
+      if (daysUntilExpiry === 1) {
+        title = 'Subscription Expiring Tomorrow! ⚠️';
+        message = `Your subscription to "${subscription.plan?.name || 'subscription plan'}" for "${subscription.business.name}" expires tomorrow. Renew now to continue enjoying premium benefits!`;
+      } else if (daysUntilExpiry <= 3) {
+        title = 'Subscription Expiring Soon! ⚠️';
+        message = `Your subscription to "${subscription.plan?.name || 'subscription plan'}" for "${subscription.business.name}" expires in ${daysUntilExpiry} days. Renew now to continue enjoying premium benefits!`;
+      } else if (daysUntilExpiry <= 7) {
+        title = 'Subscription Expiring Soon';
+        message = `Your subscription to "${subscription.plan?.name || 'subscription plan'}" for "${subscription.business.name}" expires in ${daysUntilExpiry} days. Consider renewing to maintain your premium features.`;
+      }
+
+      if (title && message) {
+        notifications.push(
+          prismaClient.notification.create({
+            data: {
+              userId: subscription.business.userId,
+              type: 'SUBSCRIPTION_EXPIRING',
+              title,
+              message,
+              link: `/dashboard/subscriptions`,
+            },
+          })
+        );
+      }
+    }
+
+    if (notifications.length > 0) {
+      await Promise.all(notifications);
+    }
+
+    return sendSuccess(res, 200, 'Expiring subscriptions checked successfully', { 
+      processed: notifications.length,
+      totalExpiring: expiringSubscriptions.length,
+    });
+  } catch (error) {
+    console.error('Check expiring subscriptions error:', error);
+    return sendError(res, 500, 'Failed to check expiring subscriptions', error);
+  }
+};
+
+// Get all subscriptions (Admin only)
+export const getAllSubscriptions = async (req: Request, res: Response) => {
+  try {
+    const { page = '1', limit = '100', status, businessId, search } = req.query;
+    const skip = (parseInt(page as string, 10) - 1) * parseInt(limit as string, 10);
+
+    const where: any = {};
+    if (status) {
+      where.status = status;
+    }
+    if (businessId) {
+      where.businessId = businessId;
+    }
+    if (search) {
+      where.OR = [
+        { business: { name: { contains: search as string, mode: 'insensitive' } } },
+        { plan: { name: { contains: search as string, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [subscriptions, total] = await Promise.all([
+      prismaClient.businessSubscription.findMany({
+        where,
+        include: {
+          plan: true,
+          business: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              user: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: parseInt(limit as string, 10),
+      }),
+      prismaClient.businessSubscription.count({ where }),
+    ]);
+
+    return sendSuccess(res, 200, 'All subscriptions fetched successfully', {
+      subscriptions,
+      pagination: {
+        total,
+        page: parseInt(page as string, 10),
+        limit: parseInt(limit as string, 10),
+        totalPages: Math.ceil(total / parseInt(limit as string, 10)),
+      },
+    });
+  } catch (error) {
+    console.error('Get all subscriptions error:', error);
+    return sendError(res, 500, 'Failed to fetch subscriptions', error);
   }
 };

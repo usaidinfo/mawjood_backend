@@ -617,3 +617,205 @@ export const getAnalytics = async (req: AuthRequest, res: Response) => {
     return sendError(res, 500, 'Failed to fetch analytics', error);
   }
 };
+
+// Get all reviews (admin)
+export const getAllReviews = async (req: Request, res: Response) => {
+  try {
+    const { page = '1', limit = '100', search = '', deleteRequestStatus } = req.query;
+
+    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+    const where: any = {};
+
+    if (deleteRequestStatus) {
+      if (deleteRequestStatus === 'null') {
+        where.deleteRequestStatus = null;
+      } else {
+        where.deleteRequestStatus = deleteRequestStatus;
+      }
+    }
+    // If no deleteRequestStatus filter, show all reviews (no filter applied)
+
+    if (search) {
+      where.OR = [
+        { comment: { contains: search as string, mode: 'insensitive' } },
+        { user: { firstName: { contains: search as string, mode: 'insensitive' } } },
+        { user: { lastName: { contains: search as string, mode: 'insensitive' } } },
+        { business: { name: { contains: search as string, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [reviews, total] = await Promise.all([
+      prisma.review.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              avatar: true,
+            },
+          },
+          business: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              logo: true,
+            },
+          },
+        },
+        skip,
+        take: parseInt(limit as string),
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.review.count({ where }),
+    ]);
+
+    return sendSuccess(res, 200, 'Reviews fetched successfully', {
+      reviews,
+      pagination: {
+        total,
+        page: parseInt(page as string),
+        limit: parseInt(limit as string),
+        totalPages: Math.ceil(total / parseInt(limit as string)),
+      },
+    });
+  } catch (error) {
+    console.error('Get all reviews error:', error);
+    return sendError(res, 500, 'Failed to fetch reviews', error);
+  }
+};
+
+// Get pending delete requests
+export const getPendingDeleteRequests = async (req: Request, res: Response) => {
+  try {
+    const { page = '1', limit = '100' } = req.query;
+    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+
+    const [reviews, total] = await Promise.all([
+      prisma.review.findMany({
+        where: { deleteRequestStatus: 'PENDING' },
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              avatar: true,
+            },
+          },
+          business: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              logo: true,
+            },
+          },
+        },
+        skip,
+        take: parseInt(limit as string),
+        orderBy: { updatedAt: 'desc' },
+      }),
+      prisma.review.count({ where: { deleteRequestStatus: 'PENDING' } }),
+    ]);
+
+    return sendSuccess(res, 200, 'Pending delete requests fetched successfully', {
+      reviews,
+      pagination: {
+        total,
+        page: parseInt(page as string),
+        limit: parseInt(limit as string),
+        totalPages: Math.ceil(total / parseInt(limit as string)),
+      },
+    });
+  } catch (error) {
+    console.error('Get pending delete requests error:', error);
+    return sendError(res, 500, 'Failed to fetch pending delete requests', error);
+  }
+};
+
+// Approve delete request (actually deletes the review)
+export const approveDeleteRequest = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const existingReview = await prisma.review.findUnique({
+      where: { id },
+    });
+
+    if (!existingReview) {
+      return sendError(res, 404, 'Review not found');
+    }
+
+    if (existingReview.deleteRequestStatus !== 'PENDING') {
+      return sendError(res, 400, 'This review does not have a pending delete request');
+    }
+
+    const businessId = existingReview.businessId;
+
+    // Delete the review
+    await prisma.review.delete({
+      where: { id },
+    });
+
+    // Update business average rating
+    const reviews = await prisma.review.findMany({
+      where: { businessId },
+      select: { rating: true },
+    });
+
+    const totalReviews = reviews.length;
+    const averageRating = totalReviews > 0 
+      ? reviews.reduce((acc, r) => acc + r.rating, 0) / totalReviews 
+      : 0;
+
+    await prisma.business.update({
+      where: { id: businessId },
+      data: {
+        averageRating: parseFloat(averageRating.toFixed(2)),
+        totalReviews,
+      },
+    });
+
+    return sendSuccess(res, 200, 'Review deleted successfully');
+  } catch (error) {
+    console.error('Approve delete request error:', error);
+    return sendError(res, 500, 'Failed to approve delete request', error);
+  }
+};
+
+// Reject delete request
+export const rejectDeleteRequest = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const existingReview = await prisma.review.findUnique({
+      where: { id },
+    });
+
+    if (!existingReview) {
+      return sendError(res, 404, 'Review not found');
+    }
+
+    if (existingReview.deleteRequestStatus !== 'PENDING') {
+      return sendError(res, 400, 'This review does not have a pending delete request');
+    }
+
+    // Set delete request status to REJECTED
+    await prisma.review.update({
+      where: { id },
+      data: {
+        deleteRequestStatus: 'REJECTED',
+      },
+    });
+
+    return sendSuccess(res, 200, 'Delete request rejected successfully');
+  } catch (error) {
+    console.error('Reject delete request error:', error);
+    return sendError(res, 500, 'Failed to reject delete request', error);
+  }
+};

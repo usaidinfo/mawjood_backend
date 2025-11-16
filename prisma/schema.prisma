@@ -182,7 +182,9 @@ model Business {
   crVerified      Boolean        @default(false)
   images          Json?
   logo            String?
+  logoAlt         String?
   coverImage      String?
+  coverImageAlt   String?
   metaTitle       String?
   metaDescription String?
   keywords        Json?
@@ -230,6 +232,8 @@ model Service {
   description String?  @db.LongText
   price       Float
   duration    Int?
+  image       String?
+  youtubeUrl  String?
   
   businessId  String
   business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -241,9 +245,10 @@ model Service {
 }
 
 model Review {
-  id         String   @id @default(cuid())
-  rating     Int
-  comment    String?  @db.LongText
+  id                 String   @id @default(cuid())
+  rating             Int
+  comment            String?  @db.LongText
+  deleteRequestStatus String?  // PENDING, APPROVED, REJECTED, null
   
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -257,6 +262,7 @@ model Review {
   @@unique([userId, businessId])
   @@index([businessId])
   @@index([userId])
+  @@index([deleteRequestStatus])
 }
 
 model Favourite {
@@ -379,6 +385,7 @@ model SiteSettings {
   footer           Json?
   about            Json?
   contact          Json?
+  currency         String?  @default("SAR")
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }

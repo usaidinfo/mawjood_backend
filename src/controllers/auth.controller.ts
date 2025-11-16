@@ -1,10 +1,97 @@
 import { Request, Response } from 'express';
+import { OAuth2Client } from 'google-auth-library';
+import type { Prisma } from '@prisma/client';
 import prisma from '../config/database';
 import { hashPassword, comparePassword } from '../utils/password.util';
 import { generateToken, generateRefreshToken } from '../utils/jwt.util';
 import { sendSuccess, sendError } from '../utils/response.util';
 import { generateOTP, storeOTP, verifyOTP, sendEmailOTP, sendPhoneOTP } from '../utils/otp.util';
-import { RegisterDTO, AuthRequest } from '../types';
+import { RegisterDTO, AuthRequest, SocialLoginDTO } from '../types';
+
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
+
+const baseUserSelect = {
+  id: true,
+  email: true,
+  phone: true,
+  firstName: true,
+  lastName: true,
+  role: true,
+  status: true,
+  avatar: true,
+  emailVerified: true,
+  phoneVerified: true,
+  createdAt: true,
+  updatedAt: true,
+};
+
+type SelectedUser = Prisma.UserGetPayload<{ select: typeof baseUserSelect }>;
+
+type ProviderProfile = {
+  email?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  avatar?: string | null;
+  emailVerified?: boolean;
+};
+
+const verifyGoogleToken = async (idToken: string): Promise<ProviderProfile> => {
+  if (!googleClient || !GOOGLE_CLIENT_ID) {
+    throw new Error('Google authentication is not configured');
+  }
+
+  const ticket = await googleClient.verifyIdToken({
+    idToken,
+    audience: GOOGLE_CLIENT_ID,
+  });
+
+  const payload = ticket.getPayload();
+
+  if (!payload) {
+    throw new Error('Invalid Google token');
+  }
+
+  return {
+    email: payload.email,
+    firstName: payload.given_name,
+    lastName: payload.family_name,
+    avatar: payload.picture,
+    emailVerified: payload.email_verified,
+  };
+};
+
+const fetchFacebookProfile = async (accessToken: string): Promise<ProviderProfile> => {
+  const fields = 'id,email,first_name,last_name,picture';
+  const url = `https://graph.facebook.com/me?fields=${fields}&access_token=${encodeURIComponent(
+    accessToken,
+  )}`;
+
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error('Failed to verify Facebook token');
+  }
+
+  const data = (await response.json()) as {
+    email?: string;
+    first_name?: string;
+    last_name?: string;
+    picture?: {
+      data?: {
+        url?: string;
+      };
+    };
+  };
+
+  return {
+    email: data.email,
+    firstName: data.first_name,
+    lastName: data.last_name,
+    avatar: data.picture?.data?.url,
+    emailVerified: true,
+  };
+};
 
 // Register user and send OTP to phone for verification
 export const register = async (req: Request, res: Response) => {
@@ -36,45 +123,30 @@ export const register = async (req: Request, res: Response) => {
         lastName,
         role: role || 'USER',
       },
-      select: {
-        id: true,
-        email: true,
-        phone: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-        avatar: true,
-        createdAt: true,
-      },
+      select: baseUserSelect,
     });
 
-    // Send OTP to phone for verification
-    const otp = '1234'; // Static OTP for now
+    const otp = generateOTP();
+
+    // Store OTPs for both email and phone for consistency
+    storeOTP(email.toLowerCase(), otp);
     storeOTP(phone, otp);
-    
-    // TODO: Integrate actual SMS service later
-    // await sendPhoneOTP(phone, otp);
+
+    // Send OTP notifications (placeholder implementations)
+    await sendEmailOTP(email, otp);
+    // await sendPhoneOTP(phone, otp); // enable when SMS is configured
     console.log(`OTP sent to ${phone}: ${otp}`);
 
-    const token = generateToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-    });
-
-    const refreshToken = generateRefreshToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-    });
-
-    return sendSuccess(res, 201, 'User registered successfully. OTP sent to phone for verification.', {
-      user,
-      token,
-      refreshToken,
-      otpSent: true,
-      phone: phone,
-    });
+    return sendSuccess(
+      res,
+      201,
+      'User registered successfully. OTP sent to your email for verification.',
+      {
+        email,
+        otpSent: true,
+        userId: user.id,
+      }
+    );
   } catch (error) {
     console.error('Register error:', error);
     return sendError(res, 500, 'Failed to register user', error);
@@ -204,20 +276,7 @@ export const verifyEmailOTP = async (req: Request, res: Response) => {
 
     const user = await prisma.user.findUnique({
       where: { email },
-      select: {
-        id: true,
-        email: true,
-        phone: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-        status: true,
-        avatar: true,
-        emailVerified: true,
-        phoneVerified: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: baseUserSelect,
     });
 
     if (!user) {
@@ -274,20 +333,7 @@ export const verifyPhoneOTP = async (req: Request, res: Response) => {
 
     const user = await prisma.user.findUnique({
       where: { phone },
-      select: {
-        id: true,
-        email: true,
-        phone: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-        status: true,
-        avatar: true,
-        emailVerified: true,
-        phoneVerified: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: baseUserSelect,
     });
 
     if (!user) {
@@ -334,20 +380,7 @@ export const getMe = async (req: AuthRequest, res: Response) => {
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        phone: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-        status: true,
-        avatar: true,
-        emailVerified: true,
-        phoneVerified: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: baseUserSelect,
     });
 
     if (!user) {
@@ -358,5 +391,127 @@ export const getMe = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('Get me error:', error);
     return sendError(res, 500, 'Failed to fetch user', error);
+  }
+};
+
+// Social login/register
+export const socialLogin = async (req: Request, res: Response) => {
+  try {
+    const { provider, token, phone, role }: SocialLoginDTO & {
+      phone?: string;
+      role?: 'USER' | 'BUSINESS_OWNER';
+    } = req.body;
+
+    if (!provider || !token) {
+      return sendError(res, 400, 'Provider and token are required');
+    }
+
+    let profile: ProviderProfile | null = null;
+
+    if (provider === 'google') {
+      profile = await verifyGoogleToken(token);
+    } else if (provider === 'facebook') {
+      profile = await fetchFacebookProfile(token);
+    } else {
+      return sendError(res, 400, 'Unsupported social provider');
+    }
+
+    const email = profile.email?.toLowerCase();
+
+    if (!email) {
+      return sendError(
+        res,
+        400,
+        'Email address was not provided by the social provider. Please use another login method.',
+      );
+    }
+
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    let user: SelectedUser;
+    let usedPlaceholderPhone = false;
+
+    if (existingUser) {
+      if (existingUser.status !== 'ACTIVE') {
+        return sendError(res, 403, 'Account is suspended or inactive');
+      }
+
+      user = await prisma.user.update({
+        where: { id: existingUser.id },
+        data: {
+          firstName: existingUser.firstName || profile.firstName || '',
+          lastName: existingUser.lastName || profile.lastName || '',
+          avatar: profile.avatar ?? existingUser.avatar,
+          emailVerified: profile.emailVerified ?? true,
+        },
+        select: baseUserSelect,
+      });
+    } else {
+      if (!phone) {
+        return sendError(
+          res,
+          400,
+          'Phone number is required to complete registration with social login',
+        );
+      }
+
+      const phoneExists = await prisma.user.findUnique({ where: { phone } });
+      if (phoneExists) {
+        return sendError(res, 409, 'Phone number is already associated with another account');
+      }
+
+      let resolvedPhone = phone;
+
+      if (!resolvedPhone) {
+        resolvedPhone = `SOCIAL_${provider}_${Date.now()}_${Math.random()
+          .toString(36)
+          .slice(-6)}`;
+        usedPlaceholderPhone = true;
+      }
+
+      const hashedPassword = await hashPassword(
+        `${provider}_${Date.now()}_${Math.random().toString(36).slice(-8)}`,
+      );
+
+      user = await prisma.user.create({
+        data: {
+          email,
+          phone: resolvedPhone,
+          password: hashedPassword,
+          firstName: profile.firstName || '',
+          lastName: profile.lastName || '',
+          role: role === 'BUSINESS_OWNER' ? 'BUSINESS_OWNER' : 'USER',
+          avatar: profile.avatar,
+          emailVerified: true,
+        },
+        select: baseUserSelect,
+      });
+    }
+
+    const jwtToken = generateToken({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+    });
+
+    const refreshToken = generateRefreshToken({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+    });
+
+    return sendSuccess(res, 200, 'Social authentication successful', {
+      user,
+      token: jwtToken,
+      refreshToken,
+      isNewUser: !existingUser,
+      needsPhoneUpdate: usedPlaceholderPhone,
+      provider,
+    });
+  } catch (error) {
+    console.error('Social login error:', error);
+    return sendError(res, 500, 'Failed to authenticate with social provider', error);
   }
 };

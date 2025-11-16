@@ -123,14 +123,22 @@ const collectSitemapUrls = async (): Promise<SitemapUrl[]> => {
     }
   };
 
-  addUrl('/');
-  addUrl('/businesses');
-  addUrl('/categories');
-  addUrl('/blog');
-  addUrl('/about');
-  addUrl('/contact');
+  const staticPaths = [
+    '/',
+    '/businesses',
+    '/categories',
+    '/blog',
+    '/about',
+    '/contact',
+    '/register',
+    '/terms',
+    '/privacy',
+  ];
 
-  const [categories, cities, regions, businesses, blogs, blogCategories] = await Promise.all([
+  staticPaths.forEach((path) => addUrl(path));
+
+  const [categories, cities, regions, businesses, blogs, blogCategories, siteSettings] =
+    await Promise.all([
     prismaClient.category.findMany({
       select: { slug: true, updatedAt: true },
       orderBy: { updatedAt: 'desc' },
@@ -157,7 +165,24 @@ const collectSitemapUrls = async (): Promise<SitemapUrl[]> => {
       select: { slug: true, updatedAt: true },
       orderBy: { updatedAt: 'desc' },
     }),
-  ]);
+      prismaClient.siteSettings.findMany({
+        select: { key: true, updatedAt: true },
+      }),
+    ]);
+
+  siteSettings.forEach((setting: any) => {
+    const key = (setting.key || '').toLowerCase();
+    const lastmod = setting.updatedAt;
+
+    if (['terms', 'terms_and_conditions', 'terms_conditions'].includes(key)) {
+      addUrl('/terms', lastmod);
+      return;
+    }
+
+    if (['privacy', 'privacy_policy'].includes(key)) {
+      addUrl('/privacy', lastmod);
+    }
+  });
 
   categories.forEach((category: any) => {
     addUrl(`/categories/${category.slug}`, category.updatedAt);

@@ -30,6 +30,13 @@ export interface LoginDTO {
   password: string;
 }
 
+export type SocialProvider = 'google' | 'facebook';
+
+export interface SocialLoginDTO {
+  provider: SocialProvider;
+  token: string;
+}
+
 export interface BusinessDTO {
   name: string;
   description?: string;

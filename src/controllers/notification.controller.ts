@@ -28,8 +28,67 @@ export const getNotifications = async (req: AuthRequest, res: Response) => {
       prisma.notification.count({ where: { userId, isRead: false } }),
     ]);
 
+    // For subscription-related notifications, fetch subscription details
+    const enrichedNotifications = await Promise.all(
+      notifications.map(async (notification) => {
+        if (notification.type.startsWith('SUBSCRIPTION_')) {
+          // Try to get subscription details from the user's businesses
+          const userBusinesses = await prisma.business.findMany({
+            where: { userId },
+            select: {
+              id: true,
+              name: true,
+              currentSubscriptionId: true,
+              subscriptionExpiresAt: true,
+              subscriptionStartedAt: true,
+              currentSubscription: {
+                include: {
+                  plan: {
+                    select: {
+                      id: true,
+                      name: true,
+                      price: true,
+                      salePrice: true,
+                      currency: true,
+                      billingInterval: true,
+                      intervalCount: true,
+                      verifiedBadge: true,
+                      topPlacement: true,
+                      allowAdvertisements: true,
+                    },
+                  },
+                },
+              },
+            },
+          });
+
+          // Find the business with active subscription
+          const businessWithSubscription = userBusinesses.find(
+            (b) => b.currentSubscriptionId && b.subscriptionExpiresAt && new Date(b.subscriptionExpiresAt) > new Date()
+          );
+
+          return {
+            ...notification,
+            subscription: businessWithSubscription?.currentSubscription
+              ? {
+                  id: businessWithSubscription.currentSubscriptionId,
+                  plan: businessWithSubscription.currentSubscription.plan,
+                  business: {
+                    id: businessWithSubscription.id,
+                    name: businessWithSubscription.name,
+                  },
+                  expiresAt: businessWithSubscription.subscriptionExpiresAt,
+                  startedAt: businessWithSubscription.subscriptionStartedAt,
+                }
+              : null,
+          };
+        }
+        return notification;
+      })
+    );
+
     return sendSuccess(res, 200, 'Notifications fetched successfully', {
-      notifications,
+      notifications: enrichedNotifications,
       unreadCount,
       pagination: {
         total,

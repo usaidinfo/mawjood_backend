@@ -199,6 +199,7 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
     } = req.query;
 
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+    const take = parseInt(limit as string);
 
     const cacheKey = JSON.stringify({
       page,
@@ -269,21 +270,6 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
     const resolvedLocationType =
       typeof locationType === 'string' ? locationType : undefined;
 
-    const includeConfig: any = {
-        category: true,
-        city: {
-          include: { region: true },
-        },
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-    };
-
     const buildWhereWithCityIds = (cityIds?: string[]) => {
       const whereClause = { ...baseWhere };
       if (cityIds && cityIds.length > 0) {
@@ -318,15 +304,25 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       level: null,
     });
 
-    const counts = await Promise.all(
-      locationCandidates.map((candidate) =>
-        prisma.business.count({ where: candidate.where })
-      )
-    );
+    // ✅ OPTIMIZATION: Run counts in parallel and stop early if we find results
+    let selectedIndex = -1;
+    let counts: number[] = [];
+    
+    for (let i = 0; i < locationCandidates.length; i++) {
+      const count = await prisma.business.count({ where: locationCandidates[i].where });
+      counts.push(count);
+      if (count > 0) {
+        selectedIndex = i;
+        break; // Stop early if we found results
+      }
+    }
 
-    let selectedIndex = counts.findIndex((count) => count > 0);
     if (selectedIndex === -1) {
       selectedIndex = 0;
+      // Fill remaining counts with 0
+      while (counts.length < locationCandidates.length) {
+        counts.push(0);
+      }
     }
 
     const selectedCandidate = locationCandidates[selectedIndex];
@@ -335,58 +331,92 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
 
     const sortOption = typeof sortBy === 'string' ? sortBy : 'newest';
 
+    // ✅ CRITICAL FIX: Build database-level orderBy that prioritizes promoted businesses
     const buildOrderBy = (option: string) => {
-      switch (option) {
-        case 'rating_high':
-          return [
-            { averageRating: 'desc' as const },
-            { createdAt: 'desc' as const },
-          ];
-        case 'rating_low':
-          return [
-            { averageRating: 'asc' as const },
-            { createdAt: 'desc' as const },
-          ];
-        case 'oldest':
-          return [{ createdAt: 'asc' as const }];
-        case 'verified':
-          return [
-            { isVerified: 'desc' as const },
-            { createdAt: 'desc' as const },
-          ];
-        case 'not_verified':
-          return [
-            { isVerified: 'asc' as const },
-            { createdAt: 'desc' as const },
-          ];
-        case 'popular':
-          return [
-            { averageRating: 'desc' as const },
-            { totalReviews: 'desc' as const },
-            { createdAt: 'desc' as const },
-          ];
-        case 'name_asc':
-          return [{ name: 'asc' as const }];
-        case 'name_desc':
-          return [{ name: 'desc' as const }];
-        default:
-          return [{ createdAt: 'desc' as const }];
-      }
+      // Always prioritize promoted businesses first using a CASE WHEN in orderBy
+      const promotedSort = {
+        promotedUntil: 'desc' as const // This will put non-null values (active promotions) first
+      };
+
+      const baseSortOptions: any = {
+        rating_high: [
+          { averageRating: 'desc' as const },
+          { createdAt: 'desc' as const },
+        ],
+        rating_low: [
+          { averageRating: 'asc' as const },
+          { createdAt: 'desc' as const },
+        ],
+        oldest: [{ createdAt: 'asc' as const }],
+        verified: [
+          { isVerified: 'desc' as const },
+          { createdAt: 'desc' as const },
+        ],
+        not_verified: [
+          { isVerified: 'asc' as const },
+          { createdAt: 'desc' as const },
+        ],
+        popular: [
+          { averageRating: 'desc' as const },
+          { totalReviews: 'desc' as const },
+          { createdAt: 'desc' as const },
+        ],
+        name_asc: [{ name: 'asc' as const }],
+        name_desc: [{ name: 'desc' as const }],
+        newest: [{ createdAt: 'desc' as const }],
+      };
+
+      const selectedSort = baseSortOptions[option] || baseSortOptions.newest;
+      
+      // Return array with promoted sort first, then user's selected sort
+      return [promotedSort, ...selectedSort];
     };
 
     const total = counts[selectedIndex];
 
-    const rawBusinesses = total
+    // ✅ CRITICAL FIX: Fetch only the required page, sorted at database level
+    const orderBy = buildOrderBy(sortOption);
+    
+    const resultBusinesses = total
       ? await prisma.business.findMany({
           where: whereClause,
-          include: includeConfig,
-          orderBy: buildOrderBy(sortOption),
+          include: {
+            category: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                icon: true,
+              }
+            },
+            city: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                region: {
+                  select: {
+                    id: true,
+                    name: true,
+                    slug: true,
+                  }
+                }
+              }
+            },
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+              },
+            },
+          },
+          orderBy,
           skip,
-          take: parseInt(limit as string),
+          take,
         })
       : [];
-
-    const resultBusinesses = rawBusinesses;
 
     const locationContext = locationHierarchy
       ? {
@@ -658,6 +688,9 @@ export const createBusiness = async (req: AuthRequest, res: Response) => {
       metaTitle,
       metaDescription,
       keywords,
+      logoAlt,
+      coverImageAlt,
+      imageAlts, // JSON string array of alt tags for gallery images
     } = req.body;
 
     if (!name || !slug || !email || !phone || !address || !categoryId || !cityId) {
@@ -676,7 +709,7 @@ export const createBusiness = async (req: AuthRequest, res: Response) => {
     const files = req.files as { [fieldname: string]: Express.Multer.File[] };
     let logo = null;
     let coverImage = null;
-    let images: string[] = [];
+    let images: Array<{ url: string; alt: string }> = [];
 
     if (files) {
       if (files.logo && files.logo[0]) {
@@ -688,10 +721,22 @@ export const createBusiness = async (req: AuthRequest, res: Response) => {
       }
 
       if (files.images && files.images.length > 0) {
+        let parsedImageAlts: string[] = [];
+        if (imageAlts) {
+          try {
+            parsedImageAlts = typeof imageAlts === 'string' ? JSON.parse(imageAlts) : imageAlts;
+          } catch (e) {
+            console.error('Image alt tags parse error:', e);
+          }
+        }
+        
         const imageUploads = await Promise.all(
-          files.images.map(async (file) => {
+          files.images.map(async (file, index) => {
             const url = await uploadToCloudinary(file, 'businesses/gallery');
-            return url;
+            return {
+              url,
+              alt: parsedImageAlts[index] || '',
+            };
           })
         );
         images = imageUploads;
@@ -743,10 +788,12 @@ export const createBusiness = async (req: AuthRequest, res: Response) => {
         metaDescription,
         keywords: parsedKeywords,
         logo,
+        logoAlt: logoAlt || null,
         coverImage,
+        coverImageAlt: coverImageAlt || null,
         images: images.length > 0 ? images : null,
         status: 'PENDING',
-      },
+      } as any,
       include: {
         category: true,
         city: true,
@@ -800,6 +847,9 @@ export const updateBusiness = async (req: AuthRequest, res: Response) => {
       metaTitle,
       metaDescription,
       keywords,
+      logoAlt,
+      coverImageAlt,
+      imageAlts, // JSON string array of alt tags for gallery images
     } = req.body;
 
     // Handle file uploads
@@ -822,6 +872,8 @@ export const updateBusiness = async (req: AuthRequest, res: Response) => {
       metaTitle,
       metaDescription,
       keywords: keywords ? JSON.parse(keywords) : undefined,
+      logoAlt: logoAlt !== undefined ? (logoAlt || null) : undefined,
+      coverImageAlt: coverImageAlt !== undefined ? (coverImageAlt || null) : undefined,
     };
 
     if (files) {
@@ -834,17 +886,53 @@ export const updateBusiness = async (req: AuthRequest, res: Response) => {
       }
 
       if (files && files.images && files.images.length > 0) {
+        let parsedImageAlts: string[] = [];
+        if (imageAlts) {
+          try {
+            parsedImageAlts = typeof imageAlts === 'string' ? JSON.parse(imageAlts) : imageAlts;
+          } catch (e) {
+            console.error('Image alt tags parse error:', e);
+          }
+        }
+        
         const imageUploads = await Promise.all(
-          files.images.map(async (file) => {
+          files.images.map(async (file, index) => {
             const url = await uploadToCloudinary(file, 'businesses/gallery');
-            return url;
+            return {
+              url,
+              alt: parsedImageAlts[index] || '',
+            };
           })
         );
 
-        // Get existing images with proper type assertion
-        const existingImages = (existingBusiness.images as string[]) || [];
+        // Get existing images - handle both old format (string[]) and new format (object[])
+        const existingImagesRaw = existingBusiness.images || [];
+        const existingImages = Array.isArray(existingImagesRaw) 
+          ? existingImagesRaw.map((img: any) => 
+              typeof img === 'string' ? { url: img, alt: '' } : img
+            )
+          : [];
 
         updateData.images = [...existingImages, ...imageUploads];
+      } else if (imageAlts) {
+        // Update alt tags for existing images even if no new files are uploaded
+        let parsedImageAlts: string[] = [];
+        try {
+          parsedImageAlts = typeof imageAlts === 'string' ? JSON.parse(imageAlts) : imageAlts;
+        } catch (e) {
+          console.error('Image alt tags parse error:', e);
+        }
+        
+        if (parsedImageAlts.length > 0) {
+          const existingImagesRaw = existingBusiness.images || [];
+          const existingImages = Array.isArray(existingImagesRaw) 
+            ? existingImagesRaw.map((img: any, index: number) => {
+                const alt = parsedImageAlts[index] || '';
+                return typeof img === 'string' ? { url: img, alt } : { ...img, alt };
+              })
+            : [];
+          updateData.images = existingImages;
+        }
       }
     }
 
@@ -984,7 +1072,7 @@ export const addService = async (req: AuthRequest, res: Response) => {
   try {
     const { businessId } = req.params;
     const userId = req.user?.userId;
-    const { name, description, price, duration } = req.body;
+    const { name, description, price, duration, youtubeUrl } = req.body;
 
     if (!name || !price) {
       return sendError(res, 400, 'Name and price are required');
@@ -1002,14 +1090,24 @@ export const addService = async (req: AuthRequest, res: Response) => {
       return sendError(res, 403, 'You are not authorized to add services to this business');
     }
 
+    // Handle image upload
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+    let image = null;
+
+    if (files && files.image && files.image[0]) {
+      image = await uploadToCloudinary(files.image[0], 'services');
+    }
+
     const service = await prisma.service.create({
       data: {
         name,
         description,
         price: parseFloat(price),
         duration: duration ? parseInt(duration as string, 10) : null,
+        image,
+        youtubeUrl: youtubeUrl || null,
         businessId,
-      },
+      } as any,
     });
 
     return sendSuccess(res, 201, 'Service added successfully', service);
@@ -1033,6 +1131,52 @@ export const getBusinessServices = async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Get services error:', error);
     return sendError(res, 500, 'Failed to fetch services', error);
+  }
+};
+
+// Update service
+export const updateService = async (req: AuthRequest, res: Response) => {
+  try {
+    const { serviceId } = req.params;
+    const userId = req.user?.userId;
+    const { name, description, price, duration, youtubeUrl } = req.body;
+
+    const service = await prisma.service.findUnique({
+      where: { id: serviceId },
+      include: { business: true },
+    });
+
+    if (!service) {
+      return sendError(res, 404, 'Service not found');
+    }
+
+    if (service.business.userId !== userId && req.user?.role !== 'ADMIN') {
+      return sendError(res, 403, 'You are not authorized to update this service');
+    }
+
+    // Handle image upload
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+    const updateData: any = {
+      name,
+      description,
+      price: price ? parseFloat(price) : undefined,
+      duration: duration ? parseInt(duration as string, 10) : undefined,
+      youtubeUrl: youtubeUrl !== undefined ? (youtubeUrl || null) : undefined,
+    };
+
+    if (files && files.image && files.image[0]) {
+      updateData.image = await uploadToCloudinary(files.image[0], 'services');
+    }
+
+    const updatedService = await prisma.service.update({
+      where: { id: serviceId },
+      data: updateData as any,
+    });
+
+    return sendSuccess(res, 200, 'Service updated successfully', updatedService);
+  } catch (error) {
+    console.error('Update service error:', error);
+    return sendError(res, 500, 'Failed to update service', error);
   }
 };
 

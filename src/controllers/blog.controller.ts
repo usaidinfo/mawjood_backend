@@ -5,6 +5,82 @@ import { AuthRequest } from '../types';
 import { uploadToCloudinary } from '../config/cloudinary';
 
 const prismaClient = prisma as any;
+
+type BlogPublishStatus = 'DRAFT' | 'PUBLISHED' | 'SCHEDULED';
+
+const normalizeBlogStatus = (input?: unknown, fallbackPublished?: boolean): BlogPublishStatus => {
+  if (typeof input === 'string') {
+    const upper = input.toUpperCase();
+    if (upper === 'DRAFT' || upper === 'PUBLISHED' || upper === 'SCHEDULED') {
+      return upper as BlogPublishStatus;
+    }
+  }
+  if (fallbackPublished) return 'PUBLISHED';
+  return 'DRAFT';
+};
+
+const buildBlogMetaFromTags = (
+  rawTags: unknown,
+  status?: BlogPublishStatus,
+  scheduledAt?: string | null
+) => {
+  let base: any = null;
+
+  if (rawTags) {
+    try {
+      const parsed = typeof rawTags === 'string' ? JSON.parse(rawTags as string) : rawTags;
+      // We allow tags to be either an array of strings or an object
+      if (Array.isArray(parsed)) {
+        base = { tags: parsed };
+      } else if (parsed && typeof parsed === 'object') {
+        base = { ...(parsed as any) };
+      }
+    } catch {
+      // ignore parse errors and start fresh
+      base = {};
+    }
+  }
+
+  if (!base || typeof base !== 'object') {
+    base = {};
+  }
+
+  if (status) {
+    base.status = status;
+  }
+
+  if (scheduledAt) {
+    base.scheduledAt = scheduledAt;
+  } else if (base.scheduledAt) {
+    // remove stale schedule info if status changed away from scheduled
+    delete base.scheduledAt;
+  }
+
+  return base;
+};
+
+const attachBlogStatus = (blog: any) => {
+  let status: BlogPublishStatus = blog.published ? 'PUBLISHED' : 'DRAFT';
+  let scheduledAt: string | null = null;
+
+  const tags = blog?.tags as any;
+  if (tags && typeof tags === 'object' && !Array.isArray(tags)) {
+    const rawStatus = (tags as any).status;
+    if (typeof rawStatus === 'string') {
+      const norm = normalizeBlogStatus(rawStatus, blog.published);
+      status = norm;
+    }
+    if (typeof (tags as any).scheduledAt === 'string') {
+      scheduledAt = (tags as any).scheduledAt;
+    }
+  }
+
+  return {
+    ...blog,
+    status,
+    scheduledAt,
+  };
+};
 // Get all published blogs
 export const getAllBlogs = async (req: Request, res: Response) => {
   try {
@@ -44,7 +120,7 @@ export const getAllBlogs = async (req: Request, res: Response) => {
       };
     }
 
-    const [blogs, total] = await Promise.all([
+    const [blogsRaw, total] = await Promise.all([
       prismaClient.blog.findMany({
         where,
         include: {
@@ -71,6 +147,8 @@ export const getAllBlogs = async (req: Request, res: Response) => {
       }),
       prismaClient.blog.count({ where }),
     ]);
+
+    const blogs = blogsRaw.map((b: any) => attachBlogStatus(b));
 
     return sendSuccess(res, 200, 'Blogs fetched successfully', {
       blogs,
@@ -123,7 +201,9 @@ export const getBlogById = async (req: Request, res: Response) => {
       return sendError(res, 404, 'Blog not found');
     }
 
-    return sendSuccess(res, 200, 'Blog fetched successfully', blog);
+    const response = attachBlogStatus(blog);
+
+    return sendSuccess(res, 200, 'Blog fetched successfully', response);
   } catch (error) {
     console.error('Get blog error:', error);
     return sendError(res, 500, 'Failed to fetch blog', error);
@@ -165,7 +245,9 @@ export const getBlogBySlug = async (req: Request, res: Response) => {
       return sendError(res, 404, 'Blog not found');
     }
 
-    return sendSuccess(res, 200, 'Blog fetched successfully', blog);
+    const response = attachBlogStatus(blog);
+
+    return sendSuccess(res, 200, 'Blog fetched successfully', response);
   } catch (error) {
     console.error('Get blog error:', error);
     return sendError(res, 500, 'Failed to fetch blog', error);
@@ -184,6 +266,8 @@ export const createBlog = async (req: AuthRequest, res: Response) => {
       metaDescription,
       tags,
       published,
+      status,
+      scheduledAt,
       categoryIds,
     } = req.body;
 
@@ -224,6 +308,28 @@ export const createBlog = async (req: AuthRequest, res: Response) => {
       image = await uploadToCloudinary(req.file, 'blogs');
     }
 
+    const normalizedStatus = normalizeBlogStatus(status, published === 'true');
+
+    let finalPublished = normalizedStatus !== 'DRAFT';
+    let scheduledAtIso: string | null = null;
+
+    if (normalizedStatus === 'SCHEDULED') {
+      if (!scheduledAt || typeof scheduledAt !== 'string' || !scheduledAt.trim()) {
+        return sendError(res, 400, 'Please provide a valid schedule date and time');
+      }
+      const parsedDate = new Date(scheduledAt);
+      if (isNaN(parsedDate.getTime())) {
+        return sendError(res, 400, 'Invalid schedule date and time');
+      }
+      // store ISO string; front-end will decide when to show based on this
+      scheduledAtIso = parsedDate.toISOString();
+      // keep published true so that scheduled posts are available to the frontend;
+      // frontend will handle visibility based on scheduledAt vs current time.
+      finalPublished = true;
+    }
+
+    const meta = buildBlogMetaFromTags(tags, normalizedStatus, scheduledAtIso);
+
     const blog = await prismaClient.blog.create({
       data: {
         title,
@@ -232,8 +338,8 @@ export const createBlog = async (req: AuthRequest, res: Response) => {
         image,
         metaTitle,
         metaDescription,
-        tags: tags ? JSON.parse(tags) : null,
-        published: published === 'true',
+        tags: meta,
+        published: finalPublished,
         authorId: userId!,
         categories: {
           connect: parsedCategoryIds.map((id) => ({ id })),
@@ -259,11 +365,17 @@ export const createBlog = async (req: AuthRequest, res: Response) => {
       },
     });
 
-    return sendSuccess(res, 201, 'Blog created successfully', blog);
+    const response = attachAllBlogStatus(blog);
+
+    return sendSuccess(res, 201, 'Blog created successfully', response);
   } catch (error) {
     console.error('Create blog error:', error);
     return sendError(res, 500, 'Failed to create blog', error);
   }
+};
+
+const attachAllBlogStatus = (blog: any) => {
+  return attachBlogStatus(blog);
 };
 
 export const updateBlog = async (req: AuthRequest, res: Response) => {
@@ -277,6 +389,8 @@ export const updateBlog = async (req: AuthRequest, res: Response) => {
       metaDescription,
       tags,
       published,
+      status,
+      scheduledAt,
       categoryIds,
     } = req.body;
 
@@ -286,8 +400,34 @@ export const updateBlog = async (req: AuthRequest, res: Response) => {
     if (content) updateData.content = content;
     if (metaTitle !== undefined) updateData.metaTitle = metaTitle;
     if (metaDescription !== undefined) updateData.metaDescription = metaDescription;
-    if (tags) updateData.tags = JSON.parse(tags);
-    if (published !== undefined) updateData.published = published === 'true';
+    if (tags) {
+      // If explicit tags provided, merge status/scheduledAt into them below
+      updateData._rawTags = tags;
+    }
+
+    const normalizedStatus = status ? normalizeBlogStatus(status) : undefined;
+    let scheduledAtIso: string | null | undefined;
+    if (typeof scheduledAt === 'string' && scheduledAt.trim()) {
+      const parsed = new Date(scheduledAt);
+      if (isNaN(parsed.getTime())) {
+        return sendError(res, 400, 'Invalid schedule date and time');
+      }
+      scheduledAtIso = parsed.toISOString();
+    }
+
+    // Determine final published flag
+    if (normalizedStatus) {
+      if (normalizedStatus === 'DRAFT') {
+        updateData.published = false;
+      } else {
+        // For PUBLISHED or SCHEDULED we keep published=true so it is queryable;
+        // frontend will decide visibility based on status/scheduledAt.
+        updateData.published = true;
+      }
+    } else if (published !== undefined) {
+      // Fallback for older clients that only send published boolean
+      updateData.published = published === 'true';
+    }
 
     let parsedCategoryIds: string[] | undefined;
     if (categoryIds !== undefined) {
@@ -317,7 +457,31 @@ export const updateBlog = async (req: AuthRequest, res: Response) => {
       updateData.image = await uploadToCloudinary(req.file, 'blogs');
     }
 
-    const blog = await prismaClient.blog.update({
+    // Merge tags/status/scheduledAt
+    // If tags were explicitly provided in the request, use them as base. Otherwise, start from existing tags.
+    let baseTags: any = undefined;
+    if (updateData._rawTags) {
+      try {
+        const parsed = JSON.parse(updateData._rawTags);
+        baseTags = parsed;
+      } catch {
+        baseTags = undefined;
+      }
+      delete updateData._rawTags;
+    } else if (normalizedStatus || typeof scheduledAtIso === 'string') {
+      const existing = await prismaClient.blog.findUnique({
+        where: { id },
+        select: { tags: true },
+      });
+      baseTags = existing?.tags ?? null;
+    }
+
+    if (baseTags !== undefined || normalizedStatus || typeof scheduledAtIso === 'string') {
+      const meta = buildBlogMetaFromTags(baseTags, normalizedStatus, scheduledAtIso ?? null);
+      updateData.tags = meta;
+    }
+
+    const blogUpdated = await prismaClient.businessSubscription.update({
       where: { id },
       data: updateData,
       include: {
@@ -340,7 +504,9 @@ export const updateBlog = async (req: AuthRequest, res: Response) => {
       },
     });
 
-    return sendSuccess(res, 200, 'Blog updated successfully', blog);
+    const response = attachAllBlogStatus(blogUpdated);
+
+    return sendSuccess(res, 200, 'Blog updated successfully', response);
   } catch (error) {
     console.error('Update blog error:', error);
     return sendError(res, 500, 'Failed to update blog', error);
@@ -369,7 +535,7 @@ export const getAllBlogsAdmin = async (req: Request, res: Response) => {
     const { page = '1', limit = '10' } = req.query;
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
 
-    const [blogs, total] = await Promise.all([
+    const [blogsRaw, total] = await Promise.all([
       prismaClient.blog.findMany({
         include: {
           author: {
@@ -395,6 +561,8 @@ export const getAllBlogsAdmin = async (req: Request, res: Response) => {
       }),
       prismaClient.blog.count(),
     ]);
+
+    const blogs = blogsRaw.map((b: any) => attachBlogStatus(b));
 
     return sendSuccess(res, 200, 'All blogs fetched successfully', {
       blogs,
