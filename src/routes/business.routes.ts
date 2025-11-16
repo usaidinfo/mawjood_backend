@@ -19,7 +19,8 @@ import {
   trackBusinessView,
   getBusinessAnalytics,
   getMyBusinessesServices,
-  getMyBusinessesReviews
+  getMyBusinessesReviews,
+  diagnosePerformance
 } from '../controllers/business.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 import { upload } from '../middleware/upload.middleware';
@@ -27,6 +28,7 @@ import { upload } from '../middleware/upload.middleware';
 const router = Router();
 
 // Public routes
+router.get('/diagnose', diagnosePerformance)
 router.get('/', getAllBusinesses);
 router.get('/search/unified', unifiedSearch);
 router.get('/featured', getFeaturedBusinesses);
