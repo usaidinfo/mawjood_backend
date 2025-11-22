@@ -14,7 +14,7 @@ router.get('/', getBlogCategories);
 router.get('/slug/:slug', getBlogCategoryBySlug);
 
 router.post('/', authenticate, authorize('ADMIN'), createBlogCategory);
-router.patch('/:id', authenticate, authorize('ADMIN'), updateBlogCategory);
+router.patch('/:id', authenticate, authorize('ADMIN'), updateBlogCategory); 
 router.delete('/:id', authenticate, authorize('ADMIN'), deleteBlogCategory);
 
 export default router;

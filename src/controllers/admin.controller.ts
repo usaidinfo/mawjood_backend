@@ -442,6 +442,78 @@ export const updateUserRole = async (req: AuthRequest, res: Response) => {
   }
 };
 
+// Update user details
+export const updateUser = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { firstName, lastName, email, phone } = req.body;
+
+    // Validate required fields
+    if (!firstName || !lastName || !email || !phone) {
+      return sendError(res, 400, 'First name, last name, email, and phone are required');
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return sendError(res, 400, 'Invalid email format');
+    }
+
+    // Check if user exists
+    const existingUser = await prisma.user.findUnique({
+      where: { id },
+    });
+
+    if (!existingUser) {
+      return sendError(res, 404, 'User not found');
+    }
+
+    // Check if email is already taken by another user
+    if (email !== existingUser.email) {
+      const emailExists = await prisma.user.findFirst({
+        where: {
+          email,
+          id: { not: id },
+        },
+      });
+
+      if (emailExists) {
+        return sendError(res, 409, 'Email is already taken by another user');
+      }
+    }
+
+    // Update user
+    const user = await prisma.user.update({
+      where: { id },
+      data: {
+        firstName,
+        lastName,
+        email,
+        phone,
+      },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        status: true,
+        avatar: true,
+        emailVerified: true,
+        phoneVerified: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return sendSuccess(res, 200, 'User updated successfully', user);
+  } catch (error) {
+    console.error('Update user error:', error);
+    return sendError(res, 500, 'Failed to update user', error);
+  }
+};
+
 // Delete user
 export const deleteUser = async (req: AuthRequest, res: Response) => {
   try {

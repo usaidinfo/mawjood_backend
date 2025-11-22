@@ -3,6 +3,7 @@ import {
   getDashboardStats,
   getAllUsers,
   getUserById,
+  updateUser,
   updateUserStatus,
   updateUserRole,
   deleteUser,
@@ -28,6 +29,7 @@ router.get('/analytics', getAnalytics);
 // User management
 router.get('/users', getAllUsers);
 router.get('/users/:id', getUserById);
+router.put('/users/:id', updateUser);
 router.patch('/users/:id/status', updateUserStatus);
 router.patch('/users/:id/role', updateUserRole);
 router.delete('/users/:id', deleteUser);
