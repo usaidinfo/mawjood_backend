@@ -618,10 +618,22 @@ export const getPendingBusinesses = async (req: Request, res: Response) => {
 export const suspendBusiness = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
+    const { reason } = req.body || {}; // Optional suspension reason
 
     const business = await prisma.business.update({
       where: { id },
       data: { status: 'SUSPENDED' },
+    });
+
+    // Create notification for business owner
+    await prisma.notification.create({
+      data: {
+        userId: business.userId,
+        type: 'BUSINESS_SUSPENDED',
+        title: 'Business Suspended',
+        message: `Your business "${business.name}" has been suspended. ${reason ? `Reason: ${reason}` : 'Please contact support for more details.'}`,
+        link: `/dashboard/my-listings`,
+      },
     });
 
     return sendSuccess(res, 200, 'Business suspended successfully', business);

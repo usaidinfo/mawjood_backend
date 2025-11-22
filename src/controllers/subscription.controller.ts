@@ -61,9 +61,12 @@ export const createBusinessSubscription = async (req: AuthRequest, res: Response
       return sendError(res, 404, 'Business not found');
     }
 
-    // Verify ownership (unless admin)
     if (userRole !== 'ADMIN' && business.userId !== userId) {
       return sendError(res, 403, 'You are not authorized to create subscriptions for this business');
+    }
+
+    if (business.status !== 'APPROVED') {
+      return sendError(res, 400, 'Business must be approved before purchasing a subscription. Please wait for admin approval.');
     }
 
     if (!plan) {
@@ -172,6 +175,52 @@ export const getBusinessSubscriptions = async (req: AuthRequest, res: Response) 
     
     if (status) {
       where.status = status;
+    }
+
+    // Check and update expired subscriptions before fetching
+    const now = new Date();
+    const expiredSubscriptions = await prismaClient.businessSubscription.findMany({
+      where: {
+        status: 'ACTIVE',
+        endsAt: { lt: now },
+      },
+      include: {
+        business: {
+          select: {
+            id: true,
+            currentSubscriptionId: true,
+          },
+        },
+      },
+    });
+
+    if (expiredSubscriptions.length > 0) {
+      const expiredIds = expiredSubscriptions.map((sub: any) => sub.id);
+      
+      // Update expired subscriptions
+      await prismaClient.businessSubscription.updateMany({
+        where: { id: { in: expiredIds } },
+        data: { status: 'EXPIRED' },
+      });
+
+      // Update businesses that had these as current subscriptions
+      const businessUpdates = expiredSubscriptions
+        .filter((sub: any) => sub.business.currentSubscriptionId === sub.id)
+        .map((sub: any) =>
+          prismaClient.business.update({
+            where: { id: sub.businessId },
+            data: {
+              currentSubscriptionId: null,
+              canCreateAdvertisements: false,
+              promotedUntil: null,
+              isVerified: false,
+            },
+          })
+        );
+
+      if (businessUpdates.length > 0) {
+        await Promise.all(businessUpdates);
+      }
     }
 
     const [subscriptions, total] = await Promise.all([
@@ -518,6 +567,52 @@ export const getAllSubscriptions = async (req: Request, res: Response) => {
         { business: { name: { contains: search as string, mode: 'insensitive' } } },
         { plan: { name: { contains: search as string, mode: 'insensitive' } } },
       ];
+    }
+
+    // First, check and update expired subscriptions
+    const now = new Date();
+    const expiredSubscriptions = await prismaClient.businessSubscription.findMany({
+      where: {
+        status: 'ACTIVE',
+        endsAt: { lt: now },
+      },
+      include: {
+        business: {
+          select: {
+            id: true,
+            currentSubscriptionId: true,
+          },
+        },
+      },
+    });
+
+    if (expiredSubscriptions.length > 0) {
+      const expiredIds = expiredSubscriptions.map((sub: any) => sub.id);
+      
+      // Update expired subscriptions
+      await prismaClient.businessSubscription.updateMany({
+        where: { id: { in: expiredIds } },
+        data: { status: 'EXPIRED' },
+      });
+
+      // Update businesses that had these as current subscriptions
+      const businessUpdates = expiredSubscriptions
+        .filter((sub: any) => sub.business.currentSubscriptionId === sub.id)
+        .map((sub: any) =>
+          prismaClient.business.update({
+            where: { id: sub.businessId },
+            data: {
+              currentSubscriptionId: null,
+              canCreateAdvertisements: false,
+              promotedUntil: null,
+              isVerified: false,
+            },
+          })
+        );
+
+      if (businessUpdates.length > 0) {
+        await Promise.all(businessUpdates);
+      }
     }
 
     const [subscriptions, total] = await Promise.all([

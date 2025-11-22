@@ -180,6 +180,65 @@ const resolveLocationHierarchy = async (
   return null;
 };
 
+// Helper function to execute business query with location filter
+const executeBusinessQuery = async (
+  baseConditions: string[],
+  baseParams: any[],
+  locationCondition: string | null,
+  locationParams: any[],
+  orderByClause: string,
+  take: number,
+  skip: number
+) => {
+  const allConditions = [...baseConditions];
+  const allParams = [...baseParams];
+  
+  if (locationCondition) {
+    allConditions.push(locationCondition);
+    allParams.push(...locationParams);
+  }
+  
+  const whereClause = allConditions.length > 0 ? `WHERE ${allConditions.join(' AND ')}` : '';
+  
+  const [countResult, businesses] = await Promise.all([
+    prisma.$queryRawUnsafe<[{ total: bigint }]>(
+      `SELECT COUNT(*) as total FROM Business b ${whereClause}`,
+      ...allParams
+    ),
+    prisma.$queryRawUnsafe<any[]>(
+      `
+      SELECT 
+        b.id, b.name, b.slug, b.description, b.email, b.phone, 
+        b.whatsapp, b.website, b.address, b.latitude, b.longitude,
+        b.images, b.logo, b.logoAlt, b.coverImage, b.coverImageAlt,
+        b.metaTitle, b.metaDescription, b.keywords,
+        b.status, b.averageRating, b.totalReviews, b.workingHours,
+        b.isVerified, b.promotedUntil, b.createdAt, b.updatedAt,
+        c.id as category_id, c.name as category_name, 
+        c.slug as category_slug, c.icon as category_icon,
+        ci.id as city_id, ci.name as city_name, ci.slug as city_slug,
+        r.id as region_id, r.name as region_name, r.slug as region_slug,
+        co.id as country_id, co.name as country_name,
+        u.id as user_id, u.firstName, u.lastName, u.email as user_email
+      FROM Business b
+      LEFT JOIN Category c ON b.categoryId = c.id
+      LEFT JOIN City ci ON b.cityId = ci.id
+      LEFT JOIN Region r ON ci.regionId = r.id
+      LEFT JOIN Country co ON r.countryId = co.id
+      LEFT JOIN User u ON b.userId = u.id
+      ${whereClause}
+      ${orderByClause}
+      LIMIT ? OFFSET ?
+      `,
+      ...allParams,
+      take,
+      skip
+    )
+  ]);
+  
+  return { countResult, businesses };
+};
+
 export const getAllBusinesses = async (req: Request, res: Response) => {
   try {
     const requestStart = Date.now();
@@ -214,16 +273,16 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       return sendSuccess(res, 200, 'Businesses fetched successfully (cached)', cachedResponse.value);
     }
 
-    // Build WHERE conditions for SQL
-    const conditions: string[] = ['b.status = ?'];
-    const params: any[] = [status];
+    // Build base WHERE conditions (without location)
+    const baseConditions: string[] = ['b.status = ?'];
+    const baseParams: any[] = [status];
 
     if (search) {
-      conditions.push('(b.name LIKE ? OR b.description LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`);
+      baseConditions.push('(b.name LIKE ? OR b.description LIKE ?)');
+      baseParams.push(`%${search}%`, `%${search}%`);
     }
 
-    // Fix TypeScript error for categoryIds
+    // Handle categoryIds
     if (categoryIds) {
       let idsArray: string[];
       
@@ -236,36 +295,25 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       }
       
       const placeholders = idsArray.map(() => '?').join(',');
-      conditions.push(`b.categoryId IN (${placeholders})`);
-      params.push(...idsArray);
+      baseConditions.push(`b.categoryId IN (${placeholders})`);
+      baseParams.push(...idsArray);
     } else if (categoryId) {
-      conditions.push('b.categoryId = ?');
-      params.push(categoryId);
-    }
-
-    if (cityId) {
-      conditions.push('b.cityId = ?');
-      params.push(cityId);
-    } else if (locationId) {
-      // Handle location hierarchy if needed
-      // For now, simplified version
-      console.warn('[TODO] Location hierarchy not implemented in optimized version');
+      baseConditions.push('b.categoryId = ?');
+      baseParams.push(categoryId);
     }
 
     if (isVerified !== undefined) {
-      conditions.push('b.isVerified = ?');
-      params.push(isVerified === 'true' ? 1 : 0);
+      baseConditions.push('b.isVerified = ?');
+      baseParams.push(isVerified === 'true' ? 1 : 0);
     }
 
     if (rating) {
       const minRating = parseFloat(rating as string);
       if (!Number.isNaN(minRating)) {
-        conditions.push('b.averageRating >= ?');
-        params.push(minRating);
+        baseConditions.push('b.averageRating >= ?');
+        baseParams.push(minRating);
       }
     }
-
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     // Build ORDER BY with promoted businesses first
     let orderByClause = '';
@@ -295,53 +343,256 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
         orderByClause = 'ORDER BY CASE WHEN b.promotedUntil > NOW() THEN 0 ELSE 1 END, b.createdAt DESC';
     }
 
-    // ✅ CRITICAL: Single query with JOINs - eliminates N+1 problem
-    // This is 1 roundtrip instead of 6+
-    console.log('[DB] Executing single optimized query...');
+    console.log('[DB] Executing query with fallback logic...');
     const queryStart = Date.now();
 
-    const [countResult, businesses] = await Promise.all([
-      // Count query
-      prisma.$queryRawUnsafe<[{ total: bigint }]>(
-        `SELECT COUNT(*) as total FROM Business b ${whereClause}`,
-        ...params
-      ),
-      // Data query with JOINs (single query gets everything)
-      prisma.$queryRawUnsafe<any[]>(
-        `
-        SELECT 
-          b.id, b.name, b.slug, b.description, b.email, b.phone, 
-          b.whatsapp, b.website, b.address, b.latitude, b.longitude,
-          b.images, b.logo, b.logoAlt, b.coverImage, b.coverImageAlt,
-          b.metaTitle, b.metaDescription, b.keywords,
-          b.status, b.averageRating, b.totalReviews, b.workingHours,
-          b.isVerified, b.promotedUntil, b.createdAt, b.updatedAt,
-          c.id as category_id, c.name as category_name, 
-          c.slug as category_slug, c.icon as category_icon,
-          ci.id as city_id, ci.name as city_name, ci.slug as city_slug,
-          r.id as region_id, r.name as region_name, r.slug as region_slug,
-          u.id as user_id, u.firstName, u.lastName, u.email as user_email
-        FROM Business b
-        LEFT JOIN Category c ON b.categoryId = c.id
-        LEFT JOIN City ci ON b.cityId = ci.id
-        LEFT JOIN Region r ON ci.regionId = r.id
-        LEFT JOIN User u ON b.userId = u.id
-        ${whereClause}
-        ${orderByClause}
-        LIMIT ? OFFSET ?
-        `,
-        ...params,
+    let result: { countResult: [{ total: bigint }], businesses: any[] };
+    let locationContext: {
+      requested: { id: string; type: string; name: string } | null;
+      applied: { id: string; type: string; name: string } | null;
+      fallbackApplied: boolean;
+    } | null = null;
+
+    let requestedLocation: { id: string; type: string; name: string } | null = null;
+    let cityInfo: any = null;
+    let regionInfo: any = null;
+
+    const effectiveCityId = (cityId as string) || (locationId && locationType === 'city' ? (locationId as string) : null);
+
+    if (effectiveCityId) {
+      cityInfo = await prismaClient.city.findUnique({
+        where: { id: effectiveCityId },
+        include: {
+          region: {
+            include: {
+              country: true,
+            },
+          },
+        },
+      });
+
+      if (cityInfo) {
+        requestedLocation = {
+          id: cityInfo.id,
+          type: 'city',
+          name: cityInfo.name,
+        };
+
+        // Try city first
+        result = await executeBusinessQuery(
+          baseConditions,
+          baseParams,
+          'b.cityId = ?',
+          [effectiveCityId],
+          orderByClause,
+          take,
+          skip
+        );
+
+        const total = Number(result.countResult[0]?.total || 0);
+
+        // If no results, try region
+        if (total === 0 && cityInfo.region) {
+          const regionCityIds = await fetchRegionCityIds(cityInfo.region.id);
+          if (regionCityIds.length > 0) {
+            const placeholders = regionCityIds.map(() => '?').join(',');
+            result = await executeBusinessQuery(
+              baseConditions,
+              baseParams,
+              `b.cityId IN (${placeholders})`,
+              regionCityIds,
+              orderByClause,
+              take,
+              skip
+            );
+
+            const regionTotal = Number(result.countResult[0]?.total || 0);
+            if (regionTotal > 0) {
+              locationContext = {
+                requested: requestedLocation,
+                applied: {
+                  id: cityInfo.region.id,
+                  type: 'region',
+                  name: cityInfo.region.name,
+                },
+                fallbackApplied: true,
+              };
+            } else {
+              // If still no results, try country (all businesses)
+              result = await executeBusinessQuery(
+                baseConditions,
+                baseParams,
+                null,
+                [],
+                orderByClause,
+                take,
+                skip
+              );
+
+              const countryTotal = Number(result.countResult[0]?.total || 0);
+              if (countryTotal > 0 && cityInfo.region.country) {
+                locationContext = {
+                  requested: requestedLocation,
+                  applied: {
+                    id: cityInfo.region.country.id,
+                    type: 'country',
+                    name: cityInfo.region.country.name,
+                  },
+                  fallbackApplied: true,
+                };
+              }
+            }
+          } else {
+            // No cities in region, try country
+            result = await executeBusinessQuery(
+              baseConditions,
+              baseParams,
+              null,
+              [],
+              orderByClause,
+              take,
+              skip
+            );
+
+            const countryTotal = Number(result.countResult[0]?.total || 0);
+            if (countryTotal > 0 && cityInfo.region.country) {
+              locationContext = {
+                requested: requestedLocation,
+                applied: {
+                  id: cityInfo.region.country.id,
+                  type: 'country',
+                  name: cityInfo.region.country.name,
+                },
+                fallbackApplied: true,
+              };
+            }
+          }
+        } else if (total > 0) {
+          // Results found in city
+          locationContext = {
+            requested: requestedLocation,
+            applied: requestedLocation,
+            fallbackApplied: false,
+          };
+        }
+      } else {
+        // City not found, try without location filter
+        result = await executeBusinessQuery(
+          baseConditions,
+          baseParams,
+          null,
+          [],
+          orderByClause,
+          take,
+          skip
+        );
+      }
+    } else if (locationId) {
+      // Handle locationId (could be region)
+      const locationHierarchy = await resolveLocationHierarchy(
+        locationId as string,
+        locationType as string
+      );
+
+      if (locationHierarchy) {
+        requestedLocation = {
+          id: locationHierarchy.requestedId,
+          type: locationHierarchy.resolvedType,
+          name: locationHierarchy.resolvedName,
+        };
+
+        // Try each level in hierarchy
+        let found = false;
+        for (const level of locationHierarchy.levels) {
+          if (level.cityIds.length > 0) {
+            const placeholders = level.cityIds.map(() => '?').join(',');
+            result = await executeBusinessQuery(
+              baseConditions,
+              baseParams,
+              `b.cityId IN (${placeholders})`,
+              level.cityIds,
+              orderByClause,
+              take,
+              skip
+            );
+
+            const total = Number(result.countResult[0]?.total || 0);
+            if (total > 0) {
+              locationContext = {
+                requested: requestedLocation,
+                applied: {
+                  id: level.id,
+                  type: level.type,
+                  name: level.name,
+                },
+                fallbackApplied: level.type !== locationHierarchy.resolvedType,
+              };
+              found = true;
+              break;
+            }
+          }
+        }
+
+        if (!found) {
+          // Try country (all businesses)
+          result = await executeBusinessQuery(
+            baseConditions,
+            baseParams,
+            null,
+            [],
+            orderByClause,
+            take,
+            skip
+          );
+
+          const countryTotal = Number(result.countResult[0]?.total || 0);
+          if (countryTotal > 0) {
+            // Get country info
+            const country = await prismaClient.country.findFirst();
+            if (country) {
+              locationContext = {
+                requested: requestedLocation,
+                applied: {
+                  id: country.id,
+                  type: 'country',
+                  name: country.name,
+                },
+                fallbackApplied: true,
+              };
+            }
+          }
+        }
+      } else {
+        // Location not found, try without location filter
+        result = await executeBusinessQuery(
+          baseConditions,
+          baseParams,
+          null,
+          [],
+          orderByClause,
+          take,
+          skip
+        );
+      }
+    } else {
+      // No location specified, get all businesses
+      result = await executeBusinessQuery(
+        baseConditions,
+        baseParams,
+        null,
+        [],
+        orderByClause,
         take,
         skip
-      )
-    ]);
+      );
+    }
 
     console.log(`[DB] Query completed in ${Date.now() - queryStart}ms`);
 
-    const total = Number(countResult[0]?.total || 0);
+    const total = Number(result.countResult[0]?.total || 0);
 
     // Transform raw results to match expected format
-    const formattedBusinesses = businesses.map((row: any) => ({
+    const formattedBusinesses = result.businesses.map((row: any) => ({
       id: row.id,
       name: row.name,
       slug: row.slug,
@@ -393,7 +644,7 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
       } : null
     }));
 
-    const responsePayload = {
+    const responsePayload: any = {
       businesses: formattedBusinesses,
       pagination: {
         total,
@@ -402,6 +653,11 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
         totalPages: Math.ceil(total / take),
       },
     };
+
+    // Add location context if fallback was applied
+    if (locationContext) {
+      responsePayload.locationContext = locationContext;
+    }
 
     // Cache the response
     businessCache.set(cacheKey, {
