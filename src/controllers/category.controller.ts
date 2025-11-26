@@ -161,6 +161,21 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
         : 0;
     }
 
+    const orderConflict = await prisma.category.findFirst({
+      where: {
+        parentId: parentId || null,
+        order: finalOrder,
+      },
+    });
+
+    if (orderConflict) {
+      return sendError(
+        res,
+        400,
+        'Display order already in use for this level. Please choose a different value.'
+      );
+    }
+
     const category = await prisma.category.create({
       data: {
         name,
@@ -187,12 +202,66 @@ export const updateCategory = async (req: AuthRequest, res: Response) => {
     const { id } = req.params;
     const { name, slug, description, order, parentId } = req.body;
 
+    const existingCategory = await prisma.category.findUnique({
+      where: { id },
+    });
+
+    if (!existingCategory) {
+      return sendError(res, 404, 'Category not found');
+    }
+
+    let targetParentId: string | null = existingCategory.parentId;
+    if (parentId !== undefined) {
+      if (parentId && parentId === id) {
+        return sendError(res, 400, 'A category cannot be its own parent');
+      }
+      targetParentId = parentId ? parentId : null;
+    }
+
+    let finalOrder: number;
+    if (order !== undefined && order !== null && order !== '') {
+      const parsedOrder = parseInt(order as string);
+      if (isNaN(parsedOrder)) {
+        return sendError(res, 400, 'Display order must be a valid number');
+      }
+      finalOrder = parsedOrder;
+    } else if (targetParentId !== existingCategory.parentId) {
+      const maxOrderResult = await prisma.category.aggregate({
+        where: {
+          parentId: targetParentId,
+        },
+        _max: {
+          order: true,
+        },
+      });
+      finalOrder =
+        maxOrderResult._max.order !== null ? maxOrderResult._max.order + 1 : 0;
+    } else {
+      finalOrder = existingCategory.order;
+    }
+
+    const orderConflict = await prisma.category.findFirst({
+      where: {
+        parentId: targetParentId,
+        order: finalOrder,
+        NOT: { id },
+      },
+    });
+
+    if (orderConflict) {
+      return sendError(
+        res,
+        400,
+        'Display order already in use for this level. Please choose a different value.'
+      );
+    }
+
     const updateData: any = {};
     if (name) updateData.name = name;
     if (slug) updateData.slug = slug;
     if (description !== undefined) updateData.description = description;
-    if (order !== undefined) updateData.order = parseInt(order);
-    if (parentId !== undefined) updateData.parentId = parentId || null;
+    updateData.order = finalOrder;
+    updateData.parentId = targetParentId;
 
     // Handle file uploads
     const files = req.files as { [fieldname: string]: Express.Multer.File[] };

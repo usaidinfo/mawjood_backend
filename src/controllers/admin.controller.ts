@@ -720,11 +720,12 @@ export const getAllReviews = async (req: Request, res: Response) => {
     // If no deleteRequestStatus filter, show all reviews (no filter applied)
 
     if (search) {
+      const searchTerm = search as string;
       where.OR = [
-        { comment: { contains: search as string, mode: 'insensitive' } },
-        { user: { firstName: { contains: search as string, mode: 'insensitive' } } },
-        { user: { lastName: { contains: search as string, mode: 'insensitive' } } },
-        { business: { name: { contains: search as string, mode: 'insensitive' } } },
+        { comment: { contains: searchTerm } },
+        { user: { firstName: { contains: searchTerm } } },
+        { user: { lastName: { contains: searchTerm } } },
+        { business: { name: { contains: searchTerm } } },
       ];
     }
 
@@ -775,12 +776,30 @@ export const getAllReviews = async (req: Request, res: Response) => {
 // Get pending delete requests
 export const getPendingDeleteRequests = async (req: Request, res: Response) => {
   try {
-    const { page = '1', limit = '100' } = req.query;
+    const { page = '1', limit = '100', search = '' } = req.query;
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+    
+    const where: any = { deleteRequestStatus: 'PENDING' };
+
+    if (search) {
+      const searchTerm = search as string;
+      where.AND = [
+        { deleteRequestStatus: 'PENDING' },
+        {
+          OR: [
+            { comment: { contains: searchTerm } },
+            { user: { firstName: { contains: searchTerm } } },
+            { user: { lastName: { contains: searchTerm } } },
+            { business: { name: { contains: searchTerm } } },
+          ],
+        },
+      ];
+      delete where.deleteRequestStatus; // Remove the top-level filter since it's now in AND
+    }
 
     const [reviews, total] = await Promise.all([
       prisma.review.findMany({
-        where: { deleteRequestStatus: 'PENDING' },
+        where,
         include: {
           user: {
             select: {
@@ -804,7 +823,7 @@ export const getPendingDeleteRequests = async (req: Request, res: Response) => {
         take: parseInt(limit as string),
         orderBy: { updatedAt: 'desc' },
       }),
-      prisma.review.count({ where: { deleteRequestStatus: 'PENDING' } }),
+      prisma.review.count({ where }),
     ]);
 
     return sendSuccess(res, 200, 'Pending delete requests fetched successfully', {

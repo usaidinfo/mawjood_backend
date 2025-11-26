@@ -562,10 +562,30 @@ export const getAllSubscriptions = async (req: Request, res: Response) => {
     if (businessId) {
       where.businessId = businessId;
     }
-    if (search) {
+    if (typeof search === 'string' && search.trim().length > 0) {
+      const term = search.trim();
       where.OR = [
-        { business: { name: { contains: search as string, mode: 'insensitive' } } },
-        { plan: { name: { contains: search as string, mode: 'insensitive' } } },
+        {
+          business: {
+            is: {
+              name: { contains: term },
+            },
+          },
+        },
+        {
+          business: {
+            is: {
+              slug: { contains: term },
+            },
+          },
+        },
+        {
+          plan: {
+            is: {
+              name: { contains: term },
+            },
+          },
+        },
       ];
     }
 

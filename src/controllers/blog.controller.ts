@@ -481,7 +481,7 @@ export const updateBlog = async (req: AuthRequest, res: Response) => {
       updateData.tags = meta;
     }
 
-    const blogUpdated = await prismaClient.businessSubscription.update({
+    const blogUpdated = await prismaClient.blog.update({
       where: { id },
       data: updateData,
       include: {
@@ -529,14 +529,26 @@ export const deleteBlog = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// Get all blogs for admin (including unpublished)
 export const getAllBlogsAdmin = async (req: Request, res: Response) => {
   try {
-    const { page = '1', limit = '10' } = req.query;
+    const { page = '1', limit = '10', search = '' } = req.query;
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+
+    const where: any = {};
+    if (search && typeof search === 'string' && search.trim()) {
+      const term = search.trim();
+      where.OR = [
+        { title: { contains: term } },
+        { slug: { contains: term } },
+        { metaTitle: { contains: term } },
+        { metaDescription: { contains: term } },
+        { content: { contains: term } },
+      ];
+    }
 
     const [blogsRaw, total] = await Promise.all([
       prismaClient.blog.findMany({
+        where,
         include: {
           author: {
             select: {
@@ -559,7 +571,7 @@ export const getAllBlogsAdmin = async (req: Request, res: Response) => {
         take: parseInt(limit as string),
         orderBy: { createdAt: 'desc' },
       }),
-      prismaClient.blog.count(),
+      prismaClient.blog.count({ where }),
     ]);
 
     const blogs = blogsRaw.map((b: any) => attachBlogStatus(b));

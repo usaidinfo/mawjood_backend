@@ -309,6 +309,60 @@ export const deleteCity = async (req: AuthRequest, res: Response) => {
   }
 };
 
+// Update region (Admin only)
+export const updateRegion = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { name, slug, countryId } = req.body;
+
+    const existingRegion = await prismaClient.region.findUnique({
+      where: { id },
+    });
+
+    if (!existingRegion) {
+      return sendError(res, 404, 'Region not found');
+    }
+
+    // Check if slug is being changed and if it conflicts
+    if (slug && slug !== existingRegion.slug) {
+      const slugConflict = await prismaClient.region.findUnique({
+        where: { slug },
+      });
+
+      if (slugConflict) {
+        return sendError(res, 409, 'Region with this slug already exists');
+      }
+    }
+
+    // Validate country if being changed
+    if (countryId && countryId !== existingRegion.countryId) {
+      const country = await prismaClient.country.findUnique({
+        where: { id: countryId },
+      });
+
+      if (!country) {
+        return sendError(res, 404, 'Country not found');
+      }
+    }
+
+    const updateData: any = {};
+    if (name) updateData.name = name;
+    if (slug) updateData.slug = slug;
+    if (countryId) updateData.countryId = countryId;
+
+    const region = await prismaClient.region.update({
+      where: { id },
+      data: updateData,
+      include: { country: true },
+    });
+
+    return sendSuccess(res, 200, 'Region updated successfully', region);
+  } catch (error) {
+    console.error('Update region error:', error);
+    return sendError(res, 500, 'Failed to update region', error);
+  }
+};
+
 // Delete region (Admin only)
 export const deleteRegion = async (req: AuthRequest, res: Response) => {
   try {
@@ -322,6 +376,73 @@ export const deleteRegion = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('Delete region error:', error);
     return sendError(res, 500, 'Failed to delete region', error);
+  }
+};
+
+// Update country (Admin only)
+export const updateCountry = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { name, slug, code } = req.body;
+
+    const existingCountry = await prismaClient.country.findUnique({
+      where: { id },
+    });
+
+    if (!existingCountry) {
+      return sendError(res, 404, 'Country not found');
+    }
+
+    // Check if name is being changed and if it conflicts
+    if (name && name !== existingCountry.name) {
+      const nameConflict = await prismaClient.country.findFirst({
+        where: {
+          name,
+          NOT: { id },
+        },
+      });
+
+      if (nameConflict) {
+        return sendError(res, 409, 'Country with this name already exists');
+      }
+    }
+
+    // Check if slug is being changed and if it conflicts
+    if (slug && slug !== existingCountry.slug) {
+      const slugConflict = await prismaClient.country.findUnique({
+        where: { slug },
+      });
+
+      if (slugConflict) {
+        return sendError(res, 409, 'Country with this slug already exists');
+      }
+    }
+
+    // Check if code is being changed and if it conflicts
+    if (code && code !== existingCountry.code) {
+      const codeConflict = await prismaClient.country.findUnique({
+        where: { code },
+      });
+
+      if (codeConflict) {
+        return sendError(res, 409, 'Country with this code already exists');
+      }
+    }
+
+    const updateData: any = {};
+    if (name) updateData.name = name;
+    if (slug) updateData.slug = slug;
+    if (code !== undefined) updateData.code = code || null;
+
+    const country = await prismaClient.country.update({
+      where: { id },
+      data: updateData,
+    });
+
+    return sendSuccess(res, 200, 'Country updated successfully', country);
+  } catch (error) {
+    console.error('Update country error:', error);
+    return sendError(res, 500, 'Failed to update country', error);
   }
 };
 

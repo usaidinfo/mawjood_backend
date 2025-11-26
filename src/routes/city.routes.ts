@@ -10,6 +10,8 @@ import {
   createRegion,
   createCity,
   updateCity,
+  updateRegion,
+  updateCountry,
   deleteCity,
   deleteRegion,
   deleteCountry,
@@ -31,6 +33,8 @@ router.post('/countries', authenticate, authorize('ADMIN'), createCountry);
 router.post('/regions', authenticate, authorize('ADMIN'), createRegion);
 router.post('/', authenticate, authorize('ADMIN'), createCity);
 router.put('/:id', authenticate, authorize('ADMIN'), updateCity);
+router.put('/regions/:id', authenticate, authorize('ADMIN'), updateRegion);
+router.put('/countries/:id', authenticate, authorize('ADMIN'), updateCountry);
 router.delete('/:id', authenticate, authorize('ADMIN'), deleteCity);
 router.delete('/regions/:id', authenticate, authorize('ADMIN'), deleteRegion);
 router.delete('/countries/:id', authenticate, authorize('ADMIN'), deleteCountry);
