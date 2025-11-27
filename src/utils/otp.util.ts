@@ -9,9 +9,8 @@ interface OTPStore {
 const otpStore: OTPStore = {};
 
 export const generateOTP = (): string => {
-  // For now, fixed OTP
-  return '1234';
-  // In production: return Math.floor(1000 + Math.random() * 9000).toString();
+  // Generate random 4-digit OTP
+  return Math.floor(1000 + Math.random() * 9000).toString();
 };
 
 export const storeOTP = (identifier: string, otp: string): void => {
@@ -46,8 +45,14 @@ export const verifyOTP = (identifier: string, otp: string): boolean => {
 };
 
 export const sendEmailOTP = async (email: string, otp: string): Promise<void> => {
-  // TODO: Implement email sending (Nodemailer, SendGrid, etc.)
-  console.log(`📧 Email OTP for ${email}: ${otp}`);
+  try {
+    const { emailService } = await import('../services/email.service');
+    await emailService.sendOTPEmail(email, otp);
+  } catch (error) {
+    console.error('Failed to send OTP email:', error);
+    // Don't throw - allow registration to continue even if email fails
+    console.log(`📧 Email OTP for ${email}: ${otp} (fallback - email service unavailable)`);
+  }
 };
 
 export const sendPhoneOTP = async (phone: string, otp: string): Promise<void> => {

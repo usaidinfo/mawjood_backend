@@ -467,6 +467,11 @@ export const checkExpiringSubscriptions = async (_req: Request, res: Response) =
             id: true,
             name: true,
             userId: true,
+            user: {
+              select: {
+                email: true,
+              },
+            },
           },
         },
         plan: {
@@ -488,7 +493,6 @@ export const checkExpiringSubscriptions = async (_req: Request, res: Response) =
       const endsAtTime = new Date(subscription.endsAt).getTime();
       const daysUntilExpiry = Math.ceil((endsAtTime - nowTime) / (1000 * 60 * 60 * 24));
 
-      // Check if notification already exists for this subscription
       const existingNotification = await prismaClient.notification.findFirst({
         where: {
           userId: subscription.business.userId,
@@ -497,7 +501,7 @@ export const checkExpiringSubscriptions = async (_req: Request, res: Response) =
             contains: subscription.plan?.name || 'subscription plan',
           },
           createdAt: {
-            gte: new Date(now.getTime() - 24 * 60 * 60 * 1000), // Within last 24 hours
+            gte: new Date(now.getTime() - 24 * 60 * 60 * 1000),
           },
         },
       });
@@ -532,6 +536,22 @@ export const checkExpiringSubscriptions = async (_req: Request, res: Response) =
             },
           })
         );
+
+        // Send email notification
+        if (subscription.business.user?.email) {
+          try {
+            const { emailService } = await import('../services/email.service');
+            await emailService.sendSubscriptionExpiryEmail(
+              subscription.business.user.email,
+              subscription.business.name,
+              subscription.plan?.name || 'subscription plan',
+              new Date(subscription.endsAt),
+              daysUntilExpiry
+            );
+          } catch (emailError) {
+            console.error('Failed to send subscription expiry email:', emailError);
+          }
+        }
       }
     }
 

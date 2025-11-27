@@ -128,14 +128,11 @@ export const register = async (req: Request, res: Response) => {
 
     const otp = generateOTP();
 
-    // Store OTPs for both email and phone for consistency
+    // Store OTP for email only (signup OTP only goes to email)
     storeOTP(email.toLowerCase(), otp);
-    storeOTP(phone, otp);
 
-    // Send OTP notifications (placeholder implementations)
+    // Send OTP to email only
     await sendEmailOTP(email, otp);
-    // await sendPhoneOTP(phone, otp); // enable when SMS is configured
-    console.log(`OTP sent to ${phone}: ${otp}`);
 
     return sendSuccess(
       res,

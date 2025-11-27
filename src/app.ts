@@ -21,6 +21,7 @@ import advertisementRoutes from './routes/advertisement.routes';
 import subscriptionPlanRoutes from './routes/subscriptionPlan.routes';
 import subscriptionRoutes from './routes/subscription.routes';
 import sitemapRoutes from './routes/sitemap.routes';
+import contactRoutes from './routes/contact.routes';
 
 // Import routes
 import authRoutes from './routes/auth.routes';
@@ -43,7 +44,6 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Rate limiting
 // const limiter = rateLimit({
 //   windowMs: 15 * 60 * 1000, // 15 minutes
 //   max: 100, // limit each IP to 100 requests per windowMs
@@ -51,7 +51,7 @@ app.use(express.urlencoded({ extended: true }));
 // });
 // app.use('/api', limiter);
 
-// Routes
+
 app.use('/api/auth', authRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/cities', cityRoutes);
@@ -69,6 +69,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/advertisements', advertisementRoutes);
 app.use('/api/subscription-plans', subscriptionPlanRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
+app.use('/api/contact', contactRoutes);
 app.use('/', sitemapRoutes);
 
 // Health check
