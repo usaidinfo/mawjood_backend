@@ -62,6 +62,12 @@ enum SubscriptionStatus {
   FAILED
 }
 
+enum AdvertisementType {
+  CATEGORY
+  TOP
+  FOOTER
+}
+
 model User {
   id            String      @id @default(cuid())
   email         String      @unique
@@ -391,11 +397,12 @@ model SiteSettings {
 }
 
 model Advertisement {
-  id          String    @id @default(cuid())
+  id          String           @id @default(cuid())
   title       String
   imageUrl    String
   targetUrl   String?
-  isActive    Boolean   @default(true)
+  adType      AdvertisementType @default(CATEGORY)
+  isActive    Boolean          @default(true)
   startsAt    DateTime?
   endsAt      DateTime?
   notes       String?
@@ -420,6 +427,7 @@ model Advertisement {
 
   @@index([cityId, categoryId])
   @@index([regionId, categoryId])
+  @@index([adType])
   @@index([countryId, categoryId])
   @@index([isActive, startsAt, endsAt])
 }

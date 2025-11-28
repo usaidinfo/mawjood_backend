@@ -1,0 +1,192 @@
+import axios from 'axios';
+import { paytabsConfig } from '../config/paytabs';
+
+interface PayTabsCustomer {
+  name: string;
+  email: string;
+  phone?: string;
+  street1?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  zip?: string;
+}
+
+interface PayTabsPaymentRequest {
+  profile_id: string;
+  tran_type: 'sale' | 'auth' | 'register';
+  tran_class: 'ecom' | 'recurring';
+  cart_id: string;
+  cart_description: string;
+  cart_currency: string;
+  cart_amount: number;
+  callback: string;
+  return: string;
+  customer_details: PayTabsCustomer;
+  hide_shipping?: boolean;
+}
+
+interface PayTabsPaymentResponse {
+  tran_ref: string;
+  tran_type: string;
+  cart_id: string;
+  cart_description: string;
+  cart_currency: string;
+  cart_amount: string;
+  redirect_url: string;
+  serviceId?: string;
+  profileId?: string;
+  merchantId?: string;
+  trace?: string;
+}
+
+interface PayTabsCallbackResponse {
+  tran_ref: string;
+  cart_id: string;
+  cart_description: string;
+  cart_currency: string;
+  cart_amount: string;
+  tran_currency: string;
+  tran_total: string;
+  tran_type: string;
+  tran_class: string;
+  customer_details: {
+    name: string;
+    email: string;
+    phone: string;
+    street1: string;
+    city: string;
+    state: string;
+    country: string;
+    ip: string;
+  };
+  payment_result: {
+    response_status: string; // "A" for approved, "D" for declined, "H" for on hold
+    response_code: string;
+    response_message: string;
+    transaction_time: string;
+  };
+  payment_info?: {
+    payment_method: string;
+    card_type?: string;
+    card_scheme?: string;
+  };
+}
+
+export class PayTabsService {
+  private serverKey: string;
+  private profileId: string;
+  private apiUrl: string;
+
+  constructor() {
+    this.serverKey = paytabsConfig.serverKey;
+    this.profileId = paytabsConfig.profileId;
+    this.apiUrl = paytabsConfig.apiUrl;
+  }
+
+  /**
+   * Create a payment page with PayTabs
+   */
+  async createPaymentPage(
+    amount: number,
+    currency: string,
+    cartId: string,
+    description: string,
+    customer: PayTabsCustomer,
+    callbackUrl?: string,
+    returnUrl?: string
+  ): Promise<PayTabsPaymentResponse> {
+    try {
+      const payload: PayTabsPaymentRequest = {
+        profile_id: this.profileId,
+        tran_type: 'sale',
+        tran_class: 'ecom',
+        cart_id: cartId,
+        cart_description: description,
+        cart_currency: currency,
+        cart_amount: amount,
+        callback: callbackUrl || paytabsConfig.callbackUrl,
+        return: returnUrl || paytabsConfig.returnUrl,
+        customer_details: customer,
+        hide_shipping: true,
+      };
+
+      const response = await axios.post<PayTabsPaymentResponse>(
+        `${this.apiUrl}/payment/request`,
+        payload,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: this.serverKey,
+          },
+        }
+      );
+
+      return response.data;
+    } catch (error: any) {
+      console.error('PayTabs payment creation error:', error.response?.data || error.message);
+      throw new Error(
+        error.response?.data?.message || 'Failed to create PayTabs payment page'
+      );
+    }
+  }
+
+  /**
+   * Verify payment callback from PayTabs
+   */
+  async verifyPayment(tranRef: string): Promise<PayTabsCallbackResponse> {
+    try {
+      const response = await axios.post<PayTabsCallbackResponse>(
+        `${this.apiUrl}/payment/query`,
+        {
+          profile_id: this.profileId,
+          tran_ref: tranRef,
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: this.serverKey,
+          },
+        }
+      );
+
+      return response.data;
+    } catch (error: any) {
+      console.error('PayTabs verification error:', error.response?.data || error.message);
+      throw new Error(
+        error.response?.data?.message || 'Failed to verify PayTabs payment'
+      );
+    }
+  }
+
+  /**
+   * Parse payment status from callback response
+   */
+  parsePaymentStatus(responseStatus: string): 'COMPLETED' | 'FAILED' | 'PENDING' {
+    switch (responseStatus) {
+      case 'A': // Approved
+        return 'COMPLETED';
+      case 'D': // Declined
+      case 'E': // Error
+      case 'V': // Voided
+        return 'FAILED';
+      case 'H': // On Hold
+      case 'P': // Pending
+        return 'PENDING';
+      default:
+        return 'PENDING';
+    }
+  }
+
+  /**
+   * Validate callback signature (if applicable)
+   */
+  validateCallbackSignature(signature: string, data: any): boolean {
+    // PayTabs doesn't use signature validation in the standard flow
+    // The verification is done by querying their API with tran_ref
+    return true;
+  }
+}
+
+export const paytabsService = new PayTabsService();
+

@@ -98,6 +98,7 @@ export const createAdvertisement = async (req: Request, res: Response) => {
     const {
       title,
       targetUrl,
+      adType,
       isActive,
       startsAt,
       endsAt,
@@ -116,6 +117,10 @@ export const createAdvertisement = async (req: Request, res: Response) => {
       return sendError(res, 400, 'Advertisement image is required');
     }
 
+    if (!adType || !['CATEGORY', 'TOP', 'FOOTER'].includes(adType)) {
+      return sendError(res, 400, 'Ad type is required and must be CATEGORY, TOP, or FOOTER');
+    }
+
     const imageUrl = await uploadToCloudinary(req.file, 'advertisements/banners');
 
     const advertisement = await prismaClient.advertisement.create({
@@ -123,6 +128,7 @@ export const createAdvertisement = async (req: Request, res: Response) => {
         title,
         imageUrl,
         targetUrl,
+        adType,
         notes,
         isActive: parseBoolean(isActive) ?? true,
         startsAt: parseDate(startsAt),
@@ -154,6 +160,7 @@ export const updateAdvertisement = async (req: Request, res: Response) => {
     const {
       title,
       targetUrl,
+      adType,
       isActive,
       startsAt,
       endsAt,
@@ -176,6 +183,10 @@ export const updateAdvertisement = async (req: Request, res: Response) => {
       cityId: cityId !== undefined ? cityId || null : undefined,
       categoryId: categoryId !== undefined ? categoryId || null : undefined,
     };
+
+    if (adType && ['CATEGORY', 'TOP', 'FOOTER'].includes(adType)) {
+      updateData.adType = adType;
+    }
 
     if (req.file) {
       updateData.imageUrl = await uploadToCloudinary(req.file, 'advertisements/banners');
@@ -245,6 +256,7 @@ export const getAdvertisements = async (req: Request, res: Response) => {
       regionId,
       countryId,
       isActive,
+      adType,
     } = req.query;
 
     const skip = (parseInt(page as string, 10) - 1) * parseInt(limit as string, 10);
@@ -255,6 +267,9 @@ export const getAdvertisements = async (req: Request, res: Response) => {
     if (cityId) where.cityId = cityId;
     if (regionId) where.regionId = regionId;
     if (countryId) where.countryId = countryId;
+    if (adType && ['CATEGORY', 'TOP', 'FOOTER'].includes(adType as string)) {
+      where.adType = adType;
+    }
 
     const parsedActive = parseBoolean(isActive);
     if (parsedActive !== undefined) {
@@ -299,10 +314,11 @@ type Candidate = {
   categoryId?: string | null | undefined;
 };
 
-const findAdvertisementWithFallback = async (candidates: Candidate[]) => {
+const findAdvertisementWithFallback = async (candidates: Candidate[], adType: string) => {
   for (const candidate of candidates) {
     const where: any = {
       isActive: true,
+      adType,
       ...buildDateRangeFilter(),
     };
 
@@ -319,13 +335,16 @@ const findAdvertisementWithFallback = async (candidates: Candidate[]) => {
       where.categoryId = candidate.categoryId === null ? null : candidate.categoryId;
     }
 
-    const advertisement = await prismaClient.advertisement.findFirst({
+    // Get all matching ads and return a random one
+    const advertisements = await prismaClient.advertisement.findMany({
       where,
       orderBy: { updatedAt: 'desc' },
     });
 
-    if (advertisement) {
-      return advertisement;
+    if (advertisements.length > 0) {
+      // Return a random ad from the matching ads
+      const randomIndex = Math.floor(Math.random() * advertisements.length);
+      return advertisements[randomIndex];
     }
   }
 
@@ -334,7 +353,11 @@ const findAdvertisementWithFallback = async (candidates: Candidate[]) => {
 
 export const getAdvertisementForDisplay = async (req: Request, res: Response) => {
   try {
-    const { locationId, locationType, categoryId } = req.query;
+    const { locationId, locationType, categoryId, adType } = req.query;
+
+    if (!adType || !['CATEGORY', 'TOP', 'FOOTER'].includes(adType as string)) {
+      return sendError(res, 400, 'Ad type is required and must be CATEGORY, TOP, or FOOTER');
+    }
 
     const { cityId, regionId, countryId } = await validateLocationChain(
       typeof locationId === 'string' ? locationId : undefined,
@@ -364,7 +387,13 @@ export const getAdvertisementForDisplay = async (req: Request, res: Response) =>
       candidates.push({ countryId, categoryId: null });
     }
 
-    const advertisement = await findAdvertisementWithFallback(candidates);
+    // Add global fallback (no location specified)
+    if (categoryId) {
+      candidates.push({ cityId: null, regionId: null, countryId: null, categoryId: categoryId as string });
+    }
+    candidates.push({ cityId: null, regionId: null, countryId: null, categoryId: null });
+
+    const advertisement = await findAdvertisementWithFallback(candidates, adType as string);
 
     if (!advertisement) {
       return sendSuccess(res, 200, 'No advertisement found for the provided context', null);
