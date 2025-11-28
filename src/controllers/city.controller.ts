@@ -6,9 +6,23 @@ import { AuthRequest } from '../types';
 const prismaClient = prisma as any;
 
 // Get all countries with their regions and cities
-export const getAllCountries = async (_req: Request, res: Response) => {
+export const getAllCountries = async (req: Request, res: Response) => {
   try {
+    const { search } = req.query;
+
+    const where: any = {};
+    
+    if (search && typeof search === 'string' && search.trim()) {
+      const searchTerm = search.trim();
+      where.OR = [
+        { name: { contains: searchTerm } },
+        { slug: { contains: searchTerm.toLowerCase() } },
+        { code: { contains: searchTerm.toUpperCase() } },
+      ];
+    }
+
     const countries = await prismaClient.country.findMany({
+      where,
       include: {
         regions: {
           include: {
@@ -30,9 +44,26 @@ export const getAllCountries = async (_req: Request, res: Response) => {
 };
 
 // Get all regions with cities
-export const getAllRegions = async (_req: Request, res: Response) => {
+export const getAllRegions = async (req: Request, res: Response) => {
   try {
+    const { countryId, search } = req.query;
+
+    const where: any = {};
+    
+    if (countryId) {
+      where.countryId = countryId as string;
+    }
+
+    if (search && typeof search === 'string' && search.trim()) {
+      const searchTerm = search.trim();
+      where.OR = [
+        { name: { contains: searchTerm } },
+        { slug: { contains: searchTerm.toLowerCase() } },
+      ];
+    }
+
     const regions = await prismaClient.region.findMany({
+      where,
       include: {
         country: true,
         cities: {

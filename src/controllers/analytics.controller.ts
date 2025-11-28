@@ -30,7 +30,8 @@ export const getDashboardAnalytics = async (req: AuthRequest, res: Response) => 
         totalReviews: bigint;
         totalFavourites: bigint;
         totalBlogs: bigint;
-        averageRating: number | null;
+        totalRatingSum: number | null;
+        totalRatingCount: bigint;
       }>
     >(Prisma.sql`
       SELECT
@@ -40,10 +41,15 @@ export const getDashboardAnalytics = async (req: AuthRequest, res: Response) => 
         (SELECT COUNT(*) FROM BusinessView v JOIN Business b ON b.id = v.businessId WHERE b.userId = ${userId}) AS totalViews,
         (SELECT COUNT(*) FROM BusinessView v JOIN Business b ON b.id = v.businessId WHERE b.userId = ${userId} AND v.viewedAt >= ${todayStart}) AS todayViews,
         (SELECT COUNT(*) FROM Review r JOIN Business b ON b.id = r.businessId WHERE b.userId = ${userId}) AS totalReviews,
-        (SELECT COUNT(*) FROM Favourite f JOIN Business b ON b.id = f.businessId WHERE b.userId = ${userId}) AS totalFavourites,
+        (SELECT COUNT(*) FROM Favourite f WHERE f.userId = ${userId}) AS totalFavourites,
         (SELECT COUNT(*) FROM Blog WHERE authorId = ${userId}) AS totalBlogs,
-        (SELECT AVG(averageRating) FROM Business WHERE userId = ${userId}) AS averageRating
+        (SELECT SUM(r.rating) FROM Review r JOIN Business b ON b.id = r.businessId WHERE b.userId = ${userId}) AS totalRatingSum,
+        (SELECT COUNT(*) FROM Review r JOIN Business b ON b.id = r.businessId WHERE b.userId = ${userId}) AS totalRatingCount
     `);
+
+    const ratingSum = overviewRow?.totalRatingSum ? Number(overviewRow.totalRatingSum) : 0;
+    const ratingCount = overviewRow ? Number(overviewRow.totalRatingCount ?? 0n) : 0;
+    const computedAverageRating = ratingCount > 0 ? Number((ratingSum / ratingCount).toFixed(1)) : 0;
 
     const overviewMetrics = overviewRow
       ? {
@@ -55,9 +61,7 @@ export const getDashboardAnalytics = async (req: AuthRequest, res: Response) => 
           totalReviews: Number(overviewRow.totalReviews ?? 0n),
           totalFavourites: Number(overviewRow.totalFavourites ?? 0n),
           totalBlogs: Number(overviewRow.totalBlogs ?? 0n),
-          averageRating: overviewRow.averageRating
-            ? Number(Number(overviewRow.averageRating).toFixed(1))
-            : 0,
+          averageRating: computedAverageRating,
         }
       : {
           totalListings: 0,
@@ -291,9 +295,9 @@ export const getMyDashboardStats = async (req: AuthRequest, res: Response) => {
       where: { businessId: { in: businessIds } }
     });
 
-    // Total favourites on MY businesses
+    // Total favourites saved by the current user
     const totalFavourites = await prisma.favourite.count({
-      where: { businessId: { in: businessIds } }
+      where: { userId }
     });
 
     // My blogs

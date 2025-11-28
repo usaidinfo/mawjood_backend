@@ -196,11 +196,6 @@ export const getBlogById = async (req: Request, res: Response) => {
       return sendError(res, 404, 'Blog not found');
     }
 
-    // Only show published blogs to public
-    if (!blog.published) {
-      return sendError(res, 404, 'Blog not found');
-    }
-
     const response = attachBlogStatus(blog);
 
     return sendSuccess(res, 200, 'Blog fetched successfully', response);

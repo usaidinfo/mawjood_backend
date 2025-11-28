@@ -572,7 +572,7 @@ export const checkExpiringSubscriptions = async (_req: Request, res: Response) =
 // Get all subscriptions (Admin only)
 export const getAllSubscriptions = async (req: Request, res: Response) => {
   try {
-    const { page = '1', limit = '100', status, businessId, search } = req.query;
+    const { page = '1', limit = '100', status, businessId, search, startDate, endDate } = req.query;
     const skip = (parseInt(page as string, 10) - 1) * parseInt(limit as string, 10);
 
     const where: any = {};
@@ -582,6 +582,26 @@ export const getAllSubscriptions = async (req: Request, res: Response) => {
     if (businessId) {
       where.businessId = businessId;
     }
+    
+    // Date range filtering
+    if (startDate || endDate) {
+      where.createdAt = {};
+      
+      if (startDate) {
+        // Set to start of day
+        const start = new Date(startDate as string);
+        start.setHours(0, 0, 0, 0);
+        where.createdAt.gte = start;
+      }
+      
+      if (endDate) {
+        // Set to end of day
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+        where.createdAt.lte = end;
+      }
+    }
+    
     if (typeof search === 'string' && search.trim().length > 0) {
       const term = search.trim();
       where.OR = [

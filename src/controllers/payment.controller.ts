@@ -188,10 +188,33 @@ export const getPaymentById = async (req: AuthRequest, res: Response) => {
 // Get all payments (Admin only)
 export const getAllPayments = async (req: Request, res: Response) => {
   try {
-    const { page = '1', limit = '10', status } = req.query;
+    const { page = '1', limit = '10', status, startDate, endDate } = req.query;
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
 
-    const where: any = status ? { status } : {};
+    const where: any = {};
+
+    if (status) {
+      where.status = status;
+    }
+
+    // Date range filtering
+    if (startDate || endDate) {
+      where.createdAt = {};
+      
+      if (startDate) {
+        // Set to start of day
+        const start = new Date(startDate as string);
+        start.setHours(0, 0, 0, 0);
+        where.createdAt.gte = start;
+      }
+      
+      if (endDate) {
+        // Set to end of day
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+        where.createdAt.lte = end;
+      }
+    }
 
     const [payments, total] = await Promise.all([
       prisma.payment.findMany({
