@@ -107,6 +107,44 @@ const resolveLocationHierarchy = async (
     return cached.value;
   }
 
+  // Handle country type
+  if (requestedType === 'country') {
+    const country = await prismaClient.country.findUnique({
+      where: { id: locationId },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    if (country) {
+      const countryCityIds = await fetchCountryCityIds(country.id);
+      const levels: LocationLevel[] = [];
+      
+      if (countryCityIds.length > 0) {
+        levels.push({
+          type: 'country',
+          id: country.id,
+          name: country.name,
+          cityIds: countryCityIds,
+        });
+      }
+
+      const result: LocationHierarchyResult = {
+        resolvedType: 'country',
+        resolvedName: country.name,
+        requestedId: country.id,
+        levels,
+      };
+      locationCache.set(cacheKey, {
+        expiresAt: Date.now() + LOCATION_CACHE_TTL_MS,
+        value: result,
+      });
+      return result;
+    }
+    return null;
+  }
+
   if (!requestedType || requestedType === 'city') {
     const city = await prismaClient.city.findUnique({
       where: { id: locationId },
@@ -133,6 +171,7 @@ const resolveLocationHierarchy = async (
           select: {
             id: true,
             name: true,
+            countryId: true,
           },
         });
 
@@ -145,6 +184,25 @@ const resolveLocationHierarchy = async (
               name: region.name,
               cityIds: regionCityIds,
             });
+          }
+
+          // Add country level if region has country
+          if (region.countryId) {
+            const countryCityIds = await fetchCountryCityIds(region.countryId);
+            if (countryCityIds.length > 0) {
+              const country = await prismaClient.country.findUnique({
+                where: { id: region.countryId },
+                select: { id: true, name: true },
+              });
+              if (country) {
+                levels.push({
+                  type: 'country',
+                  id: country.id,
+                  name: country.name,
+                  cityIds: countryCityIds,
+                });
+              }
+            }
           }
         }
       }
@@ -183,6 +241,25 @@ const resolveLocationHierarchy = async (
           name: region.name,
           cityIds: regionCityIds,
         });
+      }
+
+      // Add country level if region has country
+      if (region.countryId) {
+        const countryCityIds = await fetchCountryCityIds(region.countryId);
+        if (countryCityIds.length > 0) {
+          const country = await prismaClient.country.findUnique({
+            where: { id: region.countryId },
+            select: { id: true, name: true },
+          });
+          if (country) {
+            levels.push({
+              type: 'country',
+              id: country.id,
+              name: country.name,
+              cityIds: countryCityIds,
+            });
+          }
+        }
       }
 
       const result: LocationHierarchyResult = {
@@ -633,28 +710,19 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
           }
         }
       } else {
-        // Location not found, try without location filter
-        result = await executeBusinessQuery(
-          baseConditions,
-          baseParams,
-          null,
-          [],
-          orderByClause,
-          take,
-          skip
-        );
+        // Location not found, return empty results (don't show all businesses)
+        result = {
+          countResult: [{ total: BigInt(0) }],
+          businesses: [],
+        };
       }
     } else {
-      // No location specified, get all businesses
-      result = await executeBusinessQuery(
-        baseConditions,
-        baseParams,
-        null,
-        [],
-        orderByClause,
-        take,
-        skip
-      );
+      // No location specified, return empty results (require location to be specified)
+      // This prevents showing businesses from all countries when no location is selected
+      result = {
+        countResult: [{ total: BigInt(0) }],
+        businesses: [],
+      };
     }
 
     console.log(`[DB] Query completed in ${Date.now() - queryStart}ms`);
