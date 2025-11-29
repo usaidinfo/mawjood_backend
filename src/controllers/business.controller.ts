@@ -72,6 +72,28 @@ const fetchRegionCityIds = async (regionId: string): Promise<string[]> => {
   return uniqueCityIds(cities.map((c) => c.id));
 };
 
+const fetchCountryCityIds = async (countryId: string): Promise<string[]> => {
+  // Get all regions in the country
+  const regions = await prismaClient.region.findMany({
+    where: { countryId },
+    select: { id: true },
+  });
+  
+  const regionIds = regions.map((r) => r.id);
+  
+  if (regionIds.length === 0) {
+    return [];
+  }
+  
+  // Get all cities in those regions
+  const cities = await prismaClient.city.findMany({
+    where: { regionId: { in: regionIds } },
+    select: { id: true },
+  });
+  
+  return uniqueCityIds(cities.map((c) => c.id));
+};
+
 const resolveLocationHierarchy = async (
   locationId: string,
   locationType?: string
@@ -418,57 +440,68 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
                 fallbackApplied: true,
               };
             } else {
-              // If still no results, try country (all businesses)
-              result = await executeBusinessQuery(
-                baseConditions,
-                baseParams,
-                null,
-                [],
-                orderByClause,
-                take,
-                skip
-              );
+              // If still no results, try country (filter by country's cities only)
+              if (cityInfo.region.country) {
+                const countryCityIds = await fetchCountryCityIds(cityInfo.region.country.id);
+                if (countryCityIds.length > 0) {
+                  const placeholders = countryCityIds.map(() => '?').join(',');
+                  result = await executeBusinessQuery(
+                    baseConditions,
+                    baseParams,
+                    `b.cityId IN (${placeholders})`,
+                    countryCityIds,
+                    orderByClause,
+                    take,
+                    skip
+                  );
 
-              const countryTotal = Number(result.countResult[0]?.total || 0);
-              if (countryTotal > 0 && cityInfo.region.country) {
-                locationContext = {
-                  requested: requestedLocation,
-                  applied: {
-                    id: cityInfo.region.country.id,
-                    type: 'country',
-                    name: cityInfo.region.country.name,
-                  },
-                  fallbackApplied: true,
-                };
+                  const countryTotal = Number(result.countResult[0]?.total || 0);
+                  if (countryTotal > 0) {
+                    locationContext = {
+                      requested: requestedLocation,
+                      applied: {
+                        id: cityInfo.region.country.id,
+                        type: 'country',
+                        name: cityInfo.region.country.name,
+                      },
+                      fallbackApplied: true,
+                    };
+                  }
+                }
               }
             }
           } else {
-            // No cities in region, try country
-            result = await executeBusinessQuery(
-              baseConditions,
-              baseParams,
-              null,
-              [],
-              orderByClause,
-              take,
-              skip
-            );
+            // No cities in region, try country (filter by country's cities only)
+            if (cityInfo.region.country) {
+              const countryCityIds = await fetchCountryCityIds(cityInfo.region.country.id);
+              if (countryCityIds.length > 0) {
+                const placeholders = countryCityIds.map(() => '?').join(',');
+                result = await executeBusinessQuery(
+                  baseConditions,
+                  baseParams,
+                  `b.cityId IN (${placeholders})`,
+                  countryCityIds,
+                  orderByClause,
+                  take,
+                  skip
+                );
 
-            const countryTotal = Number(result.countResult[0]?.total || 0);
-            if (countryTotal > 0 && cityInfo.region.country) {
-              locationContext = {
-                requested: requestedLocation,
-                applied: {
-                  id: cityInfo.region.country.id,
-                  type: 'country',
-                  name: cityInfo.region.country.name,
-                },
-                fallbackApplied: true,
-              };
+                const countryTotal = Number(result.countResult[0]?.total || 0);
+                if (countryTotal > 0) {
+                  locationContext = {
+                    requested: requestedLocation,
+                    applied: {
+                      id: cityInfo.region.country.id,
+                      type: 'country',
+                      name: cityInfo.region.country.name,
+                    },
+                    fallbackApplied: true,
+                  };
+                }
+              } 
             }
           }
         } else if (total > 0) {
-          // Results found in city
           locationContext = {
             requested: requestedLocation,
             applied: requestedLocation,
@@ -476,7 +509,6 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
           };
         }
       } else {
-        // City not found, try without location filter
         result = await executeBusinessQuery(
           baseConditions,
           baseParams,
@@ -534,31 +566,69 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
         }
 
         if (!found) {
-          // Try country (all businesses)
-          result = await executeBusinessQuery(
-            baseConditions,
-            baseParams,
-            null,
-            [],
-            orderByClause,
-            take,
-            skip
-          );
-
-          const countryTotal = Number(result.countResult[0]?.total || 0);
-          if (countryTotal > 0) {
-            // Get country info
-            const country = await prismaClient.country.findFirst();
-            if (country) {
-              locationContext = {
-                requested: requestedLocation,
-                applied: {
-                  id: country.id,
-                  type: 'country',
-                  name: country.name,
+          // Try country (filter by country's cities only)
+          // Get country from the location hierarchy
+          let countryId: string | null = null;
+          let countryName: string | null = null;
+          
+          // Try to get country from the first level's region
+          if (locationHierarchy.levels.length > 0) {
+            const firstLevel = locationHierarchy.levels[0];
+            if (firstLevel.type === 'city') {
+              const city = await prismaClient.city.findUnique({
+                where: { id: firstLevel.id },
+                include: {
+                  region: {
+                    include: {
+                      country: true,
+                    },
+                  },
                 },
-                fallbackApplied: true,
-              };
+              });
+              if (city?.region?.country) {
+                countryId = city.region.country.id;
+                countryName = city.region.country.name;
+              }
+            } else if (firstLevel.type === 'region') {
+              const region = await prismaClient.region.findUnique({
+                where: { id: firstLevel.id },
+                include: {
+                  country: true,
+                },
+              });
+              if (region?.country) {
+                countryId = region.country.id;
+                countryName = region.country.name;
+              }
+            }
+          }
+          
+          if (countryId) {
+            const countryCityIds = await fetchCountryCityIds(countryId);
+            if (countryCityIds.length > 0) {
+              const placeholders = countryCityIds.map(() => '?').join(',');
+              result = await executeBusinessQuery(
+                baseConditions,
+                baseParams,
+                `b.cityId IN (${placeholders})`,
+                countryCityIds,
+                orderByClause,
+                take,
+                skip
+              );
+
+              const countryTotal = Number(result.countResult[0]?.total || 0);
+              if (countryTotal > 0 && countryName) {
+                locationContext = {
+                  requested: requestedLocation,
+                  applied: {
+                    id: countryId,
+                    type: 'country',
+                    name: countryName,
+                  },
+                  fallbackApplied: true,
+                };
+              }
             }
           }
         }

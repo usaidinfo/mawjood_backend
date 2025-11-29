@@ -205,7 +205,7 @@ export const getBlogById = async (req: Request, res: Response) => {
   }
 };
 
-// Get blog by slug
+// Get blog by slug (Public - only shows published blogs)
 export const getBlogBySlug = async (req: Request, res: Response) => {
   try {
     const { slug } = req.params;
@@ -237,6 +237,46 @@ export const getBlogBySlug = async (req: Request, res: Response) => {
     }
 
     if (!blog.published) {
+      return sendError(res, 404, 'Blog not found');
+    }
+
+    const response = attachBlogStatus(blog);
+
+    return sendSuccess(res, 200, 'Blog fetched successfully', response);
+  } catch (error) {
+    console.error('Get blog error:', error);
+    return sendError(res, 500, 'Failed to fetch blog', error);
+  }
+};
+
+// Get blog by slug for admin (shows all blogs regardless of published status)
+export const getBlogBySlugAdmin = async (req: Request, res: Response) => {
+  try {
+    const { slug } = req.params;
+
+    const blog = await prismaClient.blog.findUnique({
+      where: { slug },
+      include: {
+        author: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            avatar: true,
+          },
+        },
+        categories: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            description: true,
+          },
+        },
+      },
+    });
+
+    if (!blog) {
       return sendError(res, 404, 'Blog not found');
     }
 

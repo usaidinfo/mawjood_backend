@@ -3,6 +3,7 @@ import {
   getAllBlogs,
   getBlogById,
   getBlogBySlug,
+  getBlogBySlugAdmin,
   createBlog,
   updateBlog,
   deleteBlog,
@@ -19,6 +20,7 @@ router.get('/slug/:slug', getBlogBySlug);
 
 // Admin routes
 router.get('/admin/all', authenticate, authorize('ADMIN'), getAllBlogsAdmin);
+router.get('/admin/slug/:slug', authenticate, authorize('ADMIN'), getBlogBySlugAdmin);
 router.get('/:id', authenticate, authorize('ADMIN'), getBlogById);
 router.post('/', authenticate, authorize('ADMIN'), upload.single('image'), createBlog);
 router.put('/:id', authenticate, authorize('ADMIN'), upload.single('image'), updateBlog);

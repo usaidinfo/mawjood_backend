@@ -5,7 +5,7 @@ import prisma from '../config/database';
 import { hashPassword, comparePassword } from '../utils/password.util';
 import { generateToken, generateRefreshToken } from '../utils/jwt.util';
 import { sendSuccess, sendError } from '../utils/response.util';
-import { generateOTP, storeOTP, verifyOTP, sendEmailOTP, sendPhoneOTP } from '../utils/otp.util';
+import { generateOTP, storeOTP, verifyOTP, sendEmailOTP, sendPhoneOTP, storeRegistrationData, getRegistrationData } from '../utils/otp.util';
 import { RegisterDTO, AuthRequest, SocialLoginDTO } from '../types';
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
@@ -93,7 +93,7 @@ const fetchFacebookProfile = async (accessToken: string): Promise<ProviderProfil
   };
 };
 
-// Register user and send OTP to phone for verification
+// Register user - store data temporarily and send OTP (user NOT created until OTP verified)
 export const register = async (req: Request, res: Response) => {
   try {
     const { email, phone, password, firstName, lastName, role }: RegisterDTO = req.body;
@@ -102,9 +102,10 @@ export const register = async (req: Request, res: Response) => {
       return sendError(res, 400, 'All fields are required');
     }
 
+    // Check if user already exists
     const existingUser = await prisma.user.findFirst({
       where: {
-        OR: [{ email }, { phone }],
+        OR: [{ email: email.toLowerCase() }, { phone }],
       },
     });
 
@@ -112,36 +113,32 @@ export const register = async (req: Request, res: Response) => {
       return sendError(res, 409, 'User with this email or phone already exists');
     }
 
-    const hashedPassword = await hashPassword(password);
-
-    const user = await prisma.user.create({
-      data: {
-        email,
-        phone,
-        password: hashedPassword,
-        firstName,
-        lastName,
-        role: role || 'USER',
-      },
-      select: baseUserSelect,
-    });
-
+    // Generate OTP
     const otp = generateOTP();
 
-    // Store OTP for email only (signup OTP only goes to email)
+    // Store registration data temporarily (NOT in database yet)
+    storeRegistrationData(email.toLowerCase(), {
+      phone,
+      password,
+      firstName,
+      lastName,
+      role: role || 'USER',
+    });
+
+    // Store OTP for verification
     storeOTP(email.toLowerCase(), otp);
 
-    // Send OTP to email only
+    // Send OTP to email
     await sendEmailOTP(email, otp);
 
     return sendSuccess(
       res,
-      201,
-      'User registered successfully. OTP sent to your email for verification.',
+      200,
+      'OTP sent to your email. Please verify to complete registration.',
       {
         email,
         otpSent: true,
-        userId: user.id,
+        // DO NOT return userId - user doesn't exist yet!
       }
     );
   } catch (error) {
@@ -161,7 +158,7 @@ export const loginWithPassword = async (req: Request, res: Response) => {
 
     const user = await prisma.user.findFirst({
       where: {
-        OR: [{ email: identifier }, { phone: identifier }],
+        OR: [{ email: identifier.toLowerCase() }, { phone: identifier }],
       },
     });
 
@@ -177,6 +174,15 @@ export const loginWithPassword = async (req: Request, res: Response) => {
 
     if (user.status !== 'ACTIVE') {
       return sendError(res, 403, 'Account is suspended or inactive');
+    }
+
+    // Check if email is verified (required for email-based login)
+    if (identifier.includes('@') && !user.emailVerified) {
+      return sendError(
+        res,
+        403,
+        'Email not verified. Please verify your email before logging in.'
+      );
     }
 
     const token = generateToken({
@@ -204,7 +210,7 @@ export const loginWithPassword = async (req: Request, res: Response) => {
   }
 };
 
-// Send OTP to Email
+// Send OTP to Email (for login - user must already exist)
 export const sendEmailOTPController = async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
@@ -213,14 +219,18 @@ export const sendEmailOTPController = async (req: Request, res: Response) => {
       return sendError(res, 400, 'Email is required');
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
 
     if (!user) {
-      return sendError(res, 404, 'User not found');
+      return sendError(res, 404, 'User not found. Please register first.');
+    }
+
+    if (user.status !== 'ACTIVE') {
+      return sendError(res, 403, 'Account is suspended or inactive');
     }
 
     const otp = generateOTP();
-    storeOTP(email, otp);
+    storeOTP(email.toLowerCase(), otp);
     await sendEmailOTP(email, otp);
 
     return sendSuccess(res, 200, 'OTP sent to email successfully', { email });
@@ -256,7 +266,7 @@ export const sendPhoneOTPController = async (req: Request, res: Response) => {
   }
 };
 
-// Verify Email OTP and Login
+// Verify Email OTP - Creates user if registration, or logs in if existing user
 export const verifyEmailOTP = async (req: Request, res: Response) => {
   try {
     const { email, otp } = req.body;
@@ -265,48 +275,101 @@ export const verifyEmailOTP = async (req: Request, res: Response) => {
       return sendError(res, 400, 'Email and OTP are required');
     }
 
-    const isValid = verifyOTP(email, otp);
+    const emailLower = email.toLowerCase();
+    const isValid = verifyOTP(emailLower, otp);
 
     if (!isValid) {
       return sendError(res, 401, 'Invalid or expired OTP');
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email },
-      select: baseUserSelect,
-    });
+    // Check if this is a registration flow (has temporary registration data)
+    const registrationData = getRegistrationData(emailLower);
 
-    if (!user) {
-      return sendError(res, 404, 'User not found');
+    if (registrationData) {
+      // REGISTRATION FLOW: Create user now that OTP is verified
+      const existingUser = await prisma.user.findFirst({
+        where: {
+          OR: [{ email: emailLower }, { phone: registrationData.phone }],
+        },
+      });
+
+      if (existingUser) {
+        return sendError(res, 409, 'User with this email or phone already exists');
+      }
+
+      const hashedPassword = await hashPassword(registrationData.password);
+
+      const user = await prisma.user.create({
+        data: {
+          email: emailLower,
+          phone: registrationData.phone,
+          password: hashedPassword,
+          firstName: registrationData.firstName,
+          lastName: registrationData.lastName,
+          role: registrationData.role as 'USER' | 'BUSINESS_OWNER' | 'ADMIN',
+          emailVerified: true, // Verified via OTP
+        },
+        select: baseUserSelect,
+      });
+
+      const token = generateToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+      });
+
+      const refreshToken = generateRefreshToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+      });
+
+      return sendSuccess(res, 201, 'Registration successful. Account created and verified.', {
+        user,
+        token,
+        refreshToken,
+        isNewUser: true,
+      });
+    } else {
+      // LOGIN FLOW: User already exists, just verify and login
+      const user = await prisma.user.findUnique({
+        where: { email: emailLower },
+        select: baseUserSelect,
+      });
+
+      if (!user) {
+        return sendError(res, 404, 'User not found. Please register first.');
+      }
+
+      if (user.status !== 'ACTIVE') {
+        return sendError(res, 403, 'Account is suspended or inactive');
+      }
+
+      // Update email verification status
+      await prisma.user.update({
+        where: { email: emailLower },
+        data: { emailVerified: true },
+      });
+
+      const token = generateToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+      });
+
+      const refreshToken = generateRefreshToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+      });
+
+      return sendSuccess(res, 200, 'Login successful', {
+        user,
+        token,
+        refreshToken,
+        isNewUser: false,
+      });
     }
-
-    if (user.status !== 'ACTIVE') {
-      return sendError(res, 403, 'Account is suspended or inactive');
-    }
-
-    // Update email verification status
-    await prisma.user.update({
-      where: { email },
-      data: { emailVerified: true },
-    });
-
-    const token = generateToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-    });
-
-    const refreshToken = generateRefreshToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-    });
-
-    return sendSuccess(res, 200, 'Login successful', {
-      user,
-      token,
-      refreshToken,
-    });
   } catch (error) {
     console.error('Verify email OTP error:', error);
     return sendError(res, 500, 'Failed to verify OTP', error);
