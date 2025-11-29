@@ -148,15 +148,28 @@ export const getAllBlogs = async (req: Request, res: Response) => {
       prismaClient.blog.count({ where }),
     ]);
 
-    const blogs = blogsRaw.map((b: any) => attachBlogStatus(b));
+    const blogs = blogsRaw
+      .map((b: any) => attachBlogStatus(b))
+      .filter((blog: any) => {
+        // Filter out scheduled blogs that haven't reached their publish time yet
+        if (blog.status === 'SCHEDULED' && blog.scheduledAt) {
+          const scheduledDate = new Date(blog.scheduledAt);
+          const now = new Date();
+          return scheduledDate <= now; // Only show if scheduled time has passed
+        }
+        return true; // Show all PUBLISHED and DRAFT (though DRAFT already filtered by published:true)
+      });
+
+    // Recalculate total after filtering scheduled blogs
+    const filteredTotal = blogs.length;
 
     return sendSuccess(res, 200, 'Blogs fetched successfully', {
       blogs,
       pagination: {
-        total,
+        total: filteredTotal,
         page: parseInt(page as string),
         limit: parseInt(limit as string),
-        totalPages: Math.ceil(total / parseInt(limit as string)),
+        totalPages: Math.ceil(filteredTotal / parseInt(limit as string)),
       },
     });
   } catch (error) {
@@ -236,11 +249,20 @@ export const getBlogBySlug = async (req: Request, res: Response) => {
       return sendError(res, 404, 'Blog not found');
     }
 
-    if (!blog.published) {
-      return sendError(res, 404, 'Blog not found');
-    }
+    // if (!blog.published) {
+    //   return sendError(res, 404, 'Blog not found');
+    // }
 
     const response = attachBlogStatus(blog);
+
+    // Prevent viewing scheduled blogs before their scheduled time
+    if (response.status === 'SCHEDULED' && response.scheduledAt) {
+      const scheduledDate = new Date(response.scheduledAt);
+      const now = new Date();
+      if (scheduledDate > now) {
+        return sendError(res, 404, 'Blog not found');
+      }
+    }
 
     return sendSuccess(res, 200, 'Blog fetched successfully', response);
   } catch (error) {
@@ -343,7 +365,7 @@ export const createBlog = async (req: AuthRequest, res: Response) => {
       image = await uploadToCloudinary(req.file, 'blogs');
     }
 
-    const normalizedStatus = normalizeBlogStatus(status, published === 'true');
+    const normalizedStatus = normalizeBlogStatus(status, published === 'true' || published === true);
 
     let finalPublished = normalizedStatus !== 'DRAFT';
     let scheduledAtIso: string | null = null;
@@ -461,7 +483,8 @@ export const updateBlog = async (req: AuthRequest, res: Response) => {
       }
     } else if (published !== undefined) {
       // Fallback for older clients that only send published boolean
-      updateData.published = published === 'true';
+      // Handle both string and boolean values
+      updateData.published = published === 'true' || published === true;
     }
 
     let parsedCategoryIds: string[] | undefined;
