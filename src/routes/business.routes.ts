@@ -22,7 +22,7 @@ import {
   getMyBusinessesReviews,
   diagnosePerformance
 } from '../controllers/business.controller';
-import { authenticate, authorize } from '../middleware/auth.middleware';
+import { authenticate, authenticateOptional, authorize } from '../middleware/auth.middleware';
 import { upload } from '../middleware/upload.middleware';
 
 const router = Router();
@@ -38,19 +38,8 @@ router.get('/my/services', authenticate, getMyBusinessesServices);
 router.get('/my/reviews', authenticate, getMyBusinessesReviews);
 
 // Optional auth routes - checks if user is authenticated but doesn't require it
-router.get('/slug/:slug', (req, res, next) => {
-  authenticate(req, res, (err) => {
-    // Continue even if authentication fails
-    next();
-  });
-}, getBusinessBySlug);
-
-router.get('/:id', (req, res, next) => {
-  authenticate(req, res, (err) => {
-    // Continue even if authentication fails
-    next();
-  });
-}, getBusinessById);
+router.get('/slug/:slug', authenticateOptional, getBusinessBySlug);
+router.get('/:id', authenticateOptional, getBusinessById);
 router.get('/:businessId/services', getBusinessServices);
 router.post('/:id/view', trackBusinessView);
 router.get('/:id/analytics', authenticate, getBusinessAnalytics);

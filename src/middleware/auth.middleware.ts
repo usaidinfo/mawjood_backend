@@ -24,6 +24,37 @@ export const authenticate = (
   }
 };
 
+export const authenticateOptional = (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): void => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+
+    if (!token) {
+      // No token provided, continue without authentication
+      req.user = undefined;
+      next();
+      return;
+    }
+
+    try {
+      const decoded = verifyToken(token);
+      req.user = decoded;
+    } catch (error) {
+      // Invalid token, continue without authentication
+      req.user = undefined;
+    }
+    
+    next();
+  } catch (error) {
+    // Any other error, continue without authentication
+    req.user = undefined;
+    next();
+  }
+};
+
 export const authorize = (...roles: string[]) => {
   return (req: AuthRequest, res: Response, next: NextFunction): void => {
     if (!req.user) {
