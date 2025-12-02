@@ -56,10 +56,24 @@ export const getCategoryById = async (req: Request, res: Response) => {
     const category = await prisma.category.findUnique({
       where: { id },
       include: {
-        subcategories: true,
+        subcategories: {
+          include: {
+            _count: {
+              select: {
+                businesses: true,
+              },
+            },
+          },
+        },
         businesses: {
           where: { status: 'APPROVED' },
           take: 10,
+        },
+        _count: {
+          select: {
+            subcategories: true,
+            businesses: true,
+          },
         },
       },
     });
@@ -83,10 +97,24 @@ export const getCategoryBySlug = async (req: Request, res: Response) => {
     const category = await prisma.category.findUnique({
       where: { slug },
       include: {
-        subcategories: true,
+        subcategories: {
+          include: {
+            _count: {
+              select: {
+                businesses: true,
+              },
+            },
+          },
+        },
         businesses: {
           where: { status: 'APPROVED' },
           take: 10,
+        },
+        _count: {
+          select: {
+            subcategories: true,
+            businesses: true,
+          },
         },
       },
     });
