@@ -732,7 +732,7 @@ export const getAllBusinesses = async (req: Request, res: Response) => {
     // Transform raw results to match expected format
     const formattedBusinesses = result.businesses.map((row: any) => ({
       id: row.id,
-      name: row.name,
+      name: row.name ? row.name.charAt(0).toUpperCase() + row.name.slice(1) : row.name,
       slug: row.slug,
       description: row.description,
       email: row.email,
@@ -1071,6 +1071,9 @@ export const getAllBusinessesAdmin = async (req: AuthRequest, res: Response) => 
 export const getBusinessById = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    const authReq = req as AuthRequest;
+    const userId = authReq.user?.userId;
+    const userRole = authReq.user?.role;
 
     const business = await prisma.business.findUnique({
       where: { id },
@@ -1109,6 +1112,18 @@ export const getBusinessById = async (req: Request, res: Response) => {
       return sendError(res, 404, 'Business not found');
     }
 
+    // Check if business is pending and user is not owner or admin
+    if (business.status === 'PENDING') {
+      if (!userId || (business.userId !== userId && userRole !== 'ADMIN')) {
+        return sendError(res, 404, 'Business not found');
+      }
+    }
+
+    // Capitalize first letter of business name
+    if (business.name) {
+      business.name = business.name.charAt(0).toUpperCase() + business.name.slice(1);
+    }
+
     return sendSuccess(res, 200, 'Business fetched successfully', business);
   } catch (error) {
     console.error('Get business error:', error);
@@ -1120,6 +1135,9 @@ export const getBusinessById = async (req: Request, res: Response) => {
 export const getBusinessBySlug = async (req: Request, res: Response) => {
   try {
     const { slug } = req.params;
+    const authReq = req as AuthRequest;
+    const userId = authReq.user?.userId;
+    const userRole = authReq.user?.role;
 
     const business = await prisma.business.findUnique({
       where: { slug },
@@ -1156,6 +1174,18 @@ export const getBusinessBySlug = async (req: Request, res: Response) => {
 
     if (!business) {
       return sendError(res, 404, 'Business not found');
+    }
+
+    // Check if business is pending and user is not owner or admin
+    if (business.status === 'PENDING') {
+      if (!userId || (business.userId !== userId && userRole !== 'ADMIN')) {
+        return sendError(res, 404, 'Business not found');
+      }
+    }
+
+    // Capitalize first letter of business name
+    if (business.name) {
+      business.name = business.name.charAt(0).toUpperCase() + business.name.slice(1);
     }
 
     return sendSuccess(res, 200, 'Business fetched successfully', business);

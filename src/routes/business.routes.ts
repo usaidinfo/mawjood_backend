@@ -32,13 +32,25 @@ router.get('/diagnose', diagnosePerformance)
 router.get('/', getAllBusinesses);
 router.get('/search/unified', unifiedSearch);
 router.get('/featured', getFeaturedBusinesses);
-router.get('/slug/:slug', getBusinessBySlug);
 
 router.get('/my/businesses', authenticate, getMyBusinesses);
 router.get('/my/services', authenticate, getMyBusinessesServices);
 router.get('/my/reviews', authenticate, getMyBusinessesReviews);
 
-router.get('/:id', getBusinessById);
+// Optional auth routes - checks if user is authenticated but doesn't require it
+router.get('/slug/:slug', (req, res, next) => {
+  authenticate(req, res, (err) => {
+    // Continue even if authentication fails
+    next();
+  });
+}, getBusinessBySlug);
+
+router.get('/:id', (req, res, next) => {
+  authenticate(req, res, (err) => {
+    // Continue even if authentication fails
+    next();
+  });
+}, getBusinessById);
 router.get('/:businessId/services', getBusinessServices);
 router.post('/:id/view', trackBusinessView);
 router.get('/:id/analytics', authenticate, getBusinessAnalytics);

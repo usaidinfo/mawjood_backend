@@ -149,7 +149,14 @@ export const getAllBlogs = async (req: Request, res: Response) => {
     ]);
 
     const blogs = blogsRaw
-      .map((b: any) => attachBlogStatus(b))
+      .map((b: any) => {
+        const blog = attachBlogStatus(b);
+        // Capitalize first letter of blog title
+        if (blog.title) {
+          blog.title = blog.title.charAt(0).toUpperCase() + blog.title.slice(1);
+        }
+        return blog;
+      })
       .filter((blog: any) => {
         // Filter out scheduled blogs that haven't reached their publish time yet
         if (blog.status === 'SCHEDULED' && blog.scheduledAt) {
@@ -255,6 +262,11 @@ export const getBlogBySlug = async (req: Request, res: Response) => {
 
     const response = attachBlogStatus(blog);
 
+    // Capitalize first letter of blog title
+    if (response.title) {
+      response.title = response.title.charAt(0).toUpperCase() + response.title.slice(1);
+    }
+
     // Prevent viewing scheduled blogs before their scheduled time
     if (response.status === 'SCHEDULED' && response.scheduledAt) {
       const scheduledDate = new Date(response.scheduledAt);
@@ -303,6 +315,11 @@ export const getBlogBySlugAdmin = async (req: Request, res: Response) => {
     }
 
     const response = attachBlogStatus(blog);
+
+    // Capitalize first letter of blog title
+    if (response.title) {
+      response.title = response.title.charAt(0).toUpperCase() + response.title.slice(1);
+    }
 
     return sendSuccess(res, 200, 'Blog fetched successfully', response);
   } catch (error) {
@@ -632,7 +649,14 @@ export const getAllBlogsAdmin = async (req: Request, res: Response) => {
       prismaClient.blog.count({ where }),
     ]);
 
-    const blogs = blogsRaw.map((b: any) => attachBlogStatus(b));
+    const blogs = blogsRaw.map((b: any) => {
+      const blog = attachBlogStatus(b);
+      // Capitalize first letter of blog title
+      if (blog.title) {
+        blog.title = blog.title.charAt(0).toUpperCase() + blog.title.slice(1);
+      }
+      return blog;
+    });
 
     return sendSuccess(res, 200, 'All blogs fetched successfully', {
       blogs,

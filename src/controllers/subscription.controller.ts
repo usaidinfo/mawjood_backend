@@ -84,11 +84,12 @@ export const createBusinessSubscription = async (req: AuthRequest, res: Response
     const effectivePrice = plan.salePrice ?? plan.price;
     const discountAmount = price.minus(effectivePrice);
 
+    // Create subscription with PENDING status - will be activated when payment completes
     const subscription = await prismaClient.businessSubscription.create({
       data: {
         businessId,
         planId,
-        status: 'ACTIVE',
+        status: 'PENDING', // Changed to PENDING - will be activated when payment completes
         startedAt: startsAt,
         endsAt,
         price,
@@ -102,28 +103,8 @@ export const createBusinessSubscription = async (req: AuthRequest, res: Response
       },
     });
 
-    await prismaClient.business.update({
-      where: { id: businessId },
-      data: {
-        currentSubscriptionId: subscription.id,
-        subscriptionStartedAt: startsAt,
-        subscriptionExpiresAt: endsAt,
-        canCreateAdvertisements: plan.allowAdvertisements,
-        promotedUntil: plan.topPlacement ? endsAt : null,
-        isVerified: plan.verifiedBadge ? true : business.isVerified,
-      },
-    });
-
-    // Create notification for subscription activation
-    await prismaClient.notification.create({
-      data: {
-        userId: business.userId,
-        type: 'SUBSCRIPTION_ACTIVATED',
-        title: 'Subscription Activated! 🎉',
-        message: `Your subscription to "${plan.name}" for "${business.name}" has been activated. ${plan.topPlacement ? 'Your business is now featured at the top of listings!' : ''} ${plan.verifiedBadge ? 'Your business is now verified!' : ''}`,
-        link: `/dashboard/subscriptions`,
-      },
-    });
+    // Don't update business yet - wait for payment completion
+    // Business will be updated when payment callback activates the subscription
 
     return sendSuccess(res, 201, 'Subscription created successfully', subscription);
   } catch (error) {

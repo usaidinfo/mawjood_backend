@@ -173,11 +173,31 @@ export const createPayment = async (req: AuthRequest, res: Response) => {
       });
 
       console.error('PayTabs error:', paytabsError);
-      return sendError(res, 500, 'Failed to create payment page with PayTabs', paytabsError);
+      console.error('PayTabs error details:', JSON.stringify({
+        message: paytabsError?.message,
+        response: paytabsError?.response?.data,
+        status: paytabsError?.response?.status,
+        stack: paytabsError?.stack,
+      }, null, 2));
+      
+      // Extract more detailed error message
+      let errorMessage = 'Failed to create payment page with PayTabs';
+      if (paytabsError?.response?.data?.message) {
+        errorMessage = paytabsError.response.data.message;
+      } else if (paytabsError?.message) {
+        errorMessage = paytabsError.message;
+      } else if (paytabsError?.response?.data?.error) {
+        errorMessage = paytabsError.response.data.error;
+      } else if (paytabsError?.response?.data) {
+        errorMessage = JSON.stringify(paytabsError.response.data);
+      }
+      
+      return sendError(res, 500, errorMessage);
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('Create payment error:', error);
-    return sendError(res, 500, 'Failed to create payment', error);
+    const errorMessage = error?.message || error?.response?.data?.message || 'Failed to create payment';
+    return sendError(res, 500, errorMessage, error);
   }
 };
 
@@ -230,7 +250,8 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
       },
     });
 
-    // If payment is completed, update subscription if applicable
+    // IMPORTANT: Only activate subscription if payment is COMPLETED
+    // This is the ONLY place where subscriptions should be activated
     if (paymentStatus === 'COMPLETED') {
       // Check if there's a pending subscription for this business
       const pendingSubscription = await (prisma as any).businessSubscription.findFirst({
@@ -238,18 +259,84 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
           businessId: payment.businessId,
           status: 'PENDING',
         },
+        include: {
+          plan: true,
+          business: {
+            select: {
+              id: true,
+              name: true,
+              userId: true,
+              isVerified: true,
+            },
+          },
+        },
         orderBy: {
           createdAt: 'desc',
         },
       });
 
       if (pendingSubscription) {
+        console.log(`Activating subscription ${pendingSubscription.id} for business ${payment.businessId} after successful payment`);
+        
+        // Activate the subscription
         await (prisma as any).businessSubscription.update({
           where: { id: pendingSubscription.id },
           data: {
             status: 'ACTIVE',
+            paymentReference: tran_ref,
+            paymentProvider: 'PAYTABS',
           },
         });
+
+        // Update business with subscription benefits
+        await prisma.business.update({
+          where: { id: payment.businessId },
+          data: {
+            currentSubscriptionId: pendingSubscription.id,
+            subscriptionStartedAt: pendingSubscription.startedAt,
+            subscriptionExpiresAt: pendingSubscription.endsAt,
+            canCreateAdvertisements: pendingSubscription.plan.allowAdvertisements,
+            promotedUntil: pendingSubscription.plan.topPlacement ? pendingSubscription.endsAt : null,
+            isVerified: pendingSubscription.plan.verifiedBadge ? true : pendingSubscription.business.isVerified,
+          },
+        });
+
+        // Create notification for subscription activation
+        await prisma.notification.create({
+          data: {
+            userId: pendingSubscription.business.userId,
+            type: 'SUBSCRIPTION_ACTIVATED',
+            title: 'Subscription Activated! 🎉',
+            message: `Your subscription to "${pendingSubscription.plan.name}" for "${pendingSubscription.business.name}" has been activated. ${pendingSubscription.plan.topPlacement ? 'Your business is now featured at the top of listings!' : ''} ${pendingSubscription.plan.verifiedBadge ? 'Your business is now verified!' : ''}`,
+            link: `/dashboard/subscriptions`,
+          },
+        });
+      }
+    } else {
+      // Payment failed or is pending - do NOT activate subscription
+      console.log(`Payment ${payment.id} status is ${paymentStatus} - subscription will NOT be activated`);
+      
+      // Optionally, mark any pending subscriptions as failed if payment failed
+      if (paymentStatus === 'FAILED') {
+        const pendingSubscription = await (prisma as any).businessSubscription.findFirst({
+          where: {
+            businessId: payment.businessId,
+            status: 'PENDING',
+          },
+          orderBy: {
+            createdAt: 'desc',
+          },
+        });
+        
+        if (pendingSubscription) {
+          console.log(`Marking subscription ${pendingSubscription.id} as FAILED due to payment failure`);
+          await (prisma as any).businessSubscription.update({
+            where: { id: pendingSubscription.id },
+            data: {
+              status: 'FAILED',
+            },
+          });
+        }
       }
     }
 

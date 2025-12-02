@@ -122,12 +122,26 @@ export class PayTabsService {
         }
       );
 
+      if (!response.data || !response.data.redirect_url) {
+        throw new Error('Invalid response from PayTabs API');
+      }
       return response.data;
     } catch (error: any) {
-      console.error('PayTabs payment creation error:', error.response?.data || error.message);
-      throw new Error(
-        error.response?.data?.message || 'Failed to create PayTabs payment page'
-      );
+      console.error('PayTabs payment creation error:', error);
+      console.error('PayTabs error response:', error.response?.data);
+      console.error('PayTabs error status:', error.response?.status);
+      
+      // Extract error message
+      let errorMessage = 'Failed to create PayTabs payment page';
+      if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      throw new Error(errorMessage);
     }
   }
 
