@@ -90,9 +90,17 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
     const businessGrowth = [];
     const currentDate = new Date();
     
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    
     for (let i = 5; i >= 0; i--) {
       const date = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
       const nextMonth = new Date(date.getFullYear(), date.getMonth() + 1, 1);
+
+      // Validate dates
+      if (isNaN(date.getTime()) || isNaN(nextMonth.getTime())) {
+        console.error('Invalid date generated in business growth calculation');
+        continue;
+      }
 
       const count = await prisma.business.count({
         where: {
@@ -104,7 +112,7 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
       });
 
       businessGrowth.push({
-        month: date.toLocaleString('default', { month: 'short' }),
+        month: monthNames[date.getMonth()] || 'Unknown',
         year: date.getFullYear(),
         count,
       });
@@ -660,10 +668,19 @@ export const getAnalytics = async (req: AuthRequest, res: Response) => {
     // Get data for last 12 months
     const months = [];
     const currentDate = new Date();
+    
+    // Month names array for reliable formatting (doesn't depend on locale)
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
     for (let i = 11; i >= 0; i--) {
       const date = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
       const nextMonth = new Date(date.getFullYear(), date.getMonth() + 1, 1);
+
+      // Validate dates
+      if (isNaN(date.getTime()) || isNaN(nextMonth.getTime())) {
+        console.error('Invalid date generated in analytics calculation');
+        continue;
+      }
 
       const [users, businesses, payments] = await Promise.all([
         prisma.user.count({
@@ -698,7 +715,7 @@ export const getAnalytics = async (req: AuthRequest, res: Response) => {
       ]);
 
       months.push({
-        month: date.toLocaleString('default', { month: 'short', year: 'numeric' }),
+        month: `${monthNames[date.getMonth()] || 'Unknown'} ${date.getFullYear()}`,
         users,
         businesses,
         payments: payments._count,
