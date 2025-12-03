@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../config/database';
 import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest } from '../types';
+import { capitalizeUserNames, capitalizeUsersArray, capitalizeNestedUserNames } from '../utils/name.util';
 
 export const getDashboardStats = async (req: AuthRequest, res: Response) => {
   try {
@@ -32,7 +33,7 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
     ]);
 
     // Get pending businesses (limited to 5 for quick view)
-    const pendingBusinessesList = await prisma.business.findMany({
+    const pendingBusinessesListRaw = await prisma.business.findMany({
       where: { status: 'PENDING' },
       take: 5,
       orderBy: { createdAt: 'asc' },
@@ -56,9 +57,10 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
         },
       },
     });
+    const pendingBusinessesList = capitalizeNestedUserNames(pendingBusinessesListRaw);
 
     // Get recent users
-    const recentUsers = await prisma.user.findMany({
+    const recentUsersRaw = await prisma.user.findMany({
       take: 5,
       orderBy: { createdAt: 'desc' },
       select: {
@@ -72,6 +74,7 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
         createdAt: true,
       },
     });
+    const recentUsers = capitalizeUsersArray(recentUsersRaw);
 
     // Payment statistics
     const [completedPayments, pendingPayments, totalRevenue] = await Promise.all([
@@ -268,7 +271,7 @@ export const getAllUsers = async (req: Request, res: Response) => {
       where.status = status;
     }
 
-    const [users, total] = await Promise.all([
+    const [usersRaw, total] = await Promise.all([
       prisma.user.findMany({
         where,
         select: {
@@ -298,6 +301,8 @@ export const getAllUsers = async (req: Request, res: Response) => {
       }),
       prisma.user.count({ where }),
     ]);
+
+    const users = capitalizeUsersArray(usersRaw);
 
     return sendSuccess(res, 200, 'Users fetched successfully', {
       users,
@@ -377,7 +382,8 @@ export const getUserById = async (req: Request, res: Response) => {
       return sendError(res, 404, 'User not found');
     }
 
-    return sendSuccess(res, 200, 'User fetched successfully', user);
+    const capitalizedUser = capitalizeNestedUserNames(user);
+    return sendSuccess(res, 200, 'User fetched successfully', capitalizedUser);
   } catch (error) {
     console.error('Get user error:', error);
     return sendError(res, 500, 'Failed to fetch user', error);
@@ -406,7 +412,8 @@ export const updateUserStatus = async (req: AuthRequest, res: Response) => {
       },
     });
 
-    return sendSuccess(res, 200, 'User status updated successfully', user);
+    const capitalizedUser = capitalizeUserNames(user);
+    return sendSuccess(res, 200, 'User status updated successfully', capitalizedUser);
   } catch (error) {
     console.error('Update user status error:', error);
     return sendError(res, 500, 'Failed to update user status', error);
@@ -435,7 +442,8 @@ export const updateUserRole = async (req: AuthRequest, res: Response) => {
       },
     });
 
-    return sendSuccess(res, 200, 'User role updated successfully', user);
+    const capitalizedUser = capitalizeUserNames(user);
+    return sendSuccess(res, 200, 'User role updated successfully', capitalizedUser);
   } catch (error) {
     console.error('Update user role error:', error);
     return sendError(res, 500, 'Failed to update user role', error);
@@ -507,7 +515,8 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
       },
     });
 
-    return sendSuccess(res, 200, 'User updated successfully', user);
+    const capitalizedUser = capitalizeUserNames(user);
+    return sendSuccess(res, 200, 'User updated successfully', capitalizedUser);
   } catch (error) {
     console.error('Update user error:', error);
     return sendError(res, 500, 'Failed to update user', error);
@@ -574,7 +583,7 @@ export const getPendingBusinesses = async (req: Request, res: Response) => {
       delete where.status;
     }
 
-    const [businesses, total] = await Promise.all([
+    const [businessesRaw, total] = await Promise.all([
       prisma.business.findMany({
         where,
         include: {
@@ -598,6 +607,8 @@ export const getPendingBusinesses = async (req: Request, res: Response) => {
       }),
       prisma.business.count({ where }),
     ]);
+
+    const businesses = capitalizeNestedUserNames(businessesRaw);
 
     return sendSuccess(res, 200, 'Pending businesses fetched successfully', {
       businesses,

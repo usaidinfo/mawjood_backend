@@ -4,6 +4,7 @@ import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest } from '../types';
 import { hashPassword } from '../utils/password.util';
 import { uploadToCloudinary } from '../config/cloudinary';
+import { capitalizeUserNames } from '../utils/name.util';
 
 // Get user profile
 export const getUserProfile = async (req: AuthRequest, res: Response) => {
@@ -32,7 +33,8 @@ export const getUserProfile = async (req: AuthRequest, res: Response) => {
       return sendError(res, 404, 'User not found');
     }
 
-    return sendSuccess(res, 200, 'Profile fetched successfully', user);
+    const capitalizedUser = capitalizeUserNames(user);
+    return sendSuccess(res, 200, 'Profile fetched successfully', capitalizedUser);
   } catch (error) {
     console.error('Get profile error:', error);
     return sendError(res, 500, 'Failed to fetch profile', error);
@@ -73,7 +75,8 @@ export const updateUserProfile = async (req: AuthRequest, res: Response) => {
       },
     });
 
-    return sendSuccess(res, 200, 'Profile updated successfully', user);
+    const capitalizedUser = capitalizeUserNames(user);
+    return sendSuccess(res, 200, 'Profile updated successfully', capitalizedUser);
   } catch (error) {
     console.error('Update profile error:', error);
     return sendError(res, 500, 'Failed to update profile', error);

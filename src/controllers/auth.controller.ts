@@ -7,6 +7,7 @@ import { generateToken, generateRefreshToken } from '../utils/jwt.util';
 import { sendSuccess, sendError } from '../utils/response.util';
 import { generateOTP, storeOTP, verifyOTP, sendEmailOTP, sendPhoneOTP, storeRegistrationData, getRegistrationData } from '../utils/otp.util';
 import { RegisterDTO, AuthRequest, SocialLoginDTO } from '../types';
+import { capitalizeUserNames } from '../utils/name.util';
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
@@ -447,7 +448,8 @@ export const getMe = async (req: AuthRequest, res: Response) => {
       return sendError(res, 404, 'User not found');
     }
 
-    return sendSuccess(res, 200, 'User fetched successfully', user);
+    const capitalizedUser = capitalizeUserNames(user);
+    return sendSuccess(res, 200, 'User fetched successfully', capitalizedUser);
   } catch (error) {
     console.error('Get me error:', error);
     return sendError(res, 500, 'Failed to fetch user', error);
@@ -562,8 +564,10 @@ export const socialLogin = async (req: Request, res: Response) => {
       role: user.role,
     });
 
+    const capitalizedUser = capitalizeUserNames(user);
+
     return sendSuccess(res, 200, 'Social authentication successful', {
-      user,
+      user: capitalizedUser,
       token: jwtToken,
       refreshToken,
       isNewUser: !existingUser,
