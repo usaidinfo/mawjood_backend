@@ -9,6 +9,7 @@ import {
   getMyBusinesses,
   approveBusiness,
   rejectBusiness,
+  toggleVerifiedStatus,
   addService,
   getBusinessServices,
   updateService,

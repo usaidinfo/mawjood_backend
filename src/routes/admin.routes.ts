@@ -15,6 +15,7 @@ import {
   approveDeleteRequest,
   rejectDeleteRequest,
 } from '../controllers/admin.controller';
+import { toggleVerifiedStatus } from '../controllers/business.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 
 const router = Router();
@@ -37,6 +38,7 @@ router.delete('/users/:id', deleteUser);
 // Business management
 router.get('/businesses/pending', getPendingBusinesses);
 router.patch('/businesses/:id/suspend', suspendBusiness);
+router.patch('/businesses/:id/verify', toggleVerifiedStatus);
 
 // Review management
 router.get('/reviews', getAllReviews);

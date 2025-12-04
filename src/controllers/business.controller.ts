@@ -1596,6 +1596,50 @@ export const rejectBusiness = async (req: AuthRequest, res: Response) => {
   }
 };
 
+// Toggle verified status (Admin only) - Only for approved businesses
+export const toggleVerifiedStatus = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { isVerified } = req.body;
+
+    // Check if business exists and is approved
+    const existingBusiness = await prisma.business.findUnique({
+      where: { id },
+    });
+
+    if (!existingBusiness) {
+      return sendError(res, 404, 'Business not found');
+    }
+
+    if (existingBusiness.status !== 'APPROVED') {
+      return sendError(res, 400, 'Only approved businesses can be verified');
+    }
+
+    const business = await prisma.business.update({
+      where: { id },
+      data: { isVerified: isVerified === true || isVerified === 'true' },
+    });
+
+    // Create notification for business owner
+    await prisma.notification.create({
+      data: {
+        userId: business.userId,
+        type: business.isVerified ? 'BUSINESS_VERIFIED' : 'BUSINESS_UNVERIFIED',
+        title: business.isVerified ? 'Business Verified! ✅' : 'Business Verification Removed',
+        message: business.isVerified
+          ? `Your business "${business.name}" has been verified by an admin.`
+          : `The verified status has been removed from your business "${business.name}".`,
+        link: `/dashboard/my-listings`,
+      },
+    });
+
+    return sendSuccess(res, 200, business.isVerified ? 'Business verified successfully' : 'Business verification removed successfully', business);
+  } catch (error) {
+    console.error('Toggle verified status error:', error);
+    return sendError(res, 500, 'Failed to update verified status', error);
+  }
+};
+
 // Add service to business
 export const addService = async (req: AuthRequest, res: Response) => {
   try {
