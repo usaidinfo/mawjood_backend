@@ -98,6 +98,7 @@ export const createAdvertisement = async (req: Request, res: Response) => {
     const {
       title,
       targetUrl,
+      openInNewTab,
       adType,
       isActive,
       startsAt,
@@ -117,8 +118,9 @@ export const createAdvertisement = async (req: Request, res: Response) => {
       return sendError(res, 400, 'Advertisement image is required');
     }
 
-    if (!adType || !['CATEGORY', 'TOP', 'FOOTER'].includes(adType)) {
-      return sendError(res, 400, 'Ad type is required and must be CATEGORY, TOP, or FOOTER');
+    const validAdTypes = ['CATEGORY', 'TOP', 'FOOTER', 'BUSINESS_LISTING', 'BLOG_LISTING', 'HOMEPAGE'];
+    if (!adType || !validAdTypes.includes(adType)) {
+      return sendError(res, 400, `Ad type is required and must be one of: ${validAdTypes.join(', ')}`);
     }
 
     const imageUrl = await uploadToCloudinary(req.file, 'advertisements/banners');
@@ -128,6 +130,7 @@ export const createAdvertisement = async (req: Request, res: Response) => {
         title,
         imageUrl,
         targetUrl,
+        openInNewTab: parseBoolean(openInNewTab) ?? true,
         adType,
         notes,
         isActive: parseBoolean(isActive) ?? true,
@@ -160,6 +163,7 @@ export const updateAdvertisement = async (req: Request, res: Response) => {
     const {
       title,
       targetUrl,
+      openInNewTab,
       adType,
       isActive,
       startsAt,
@@ -184,7 +188,12 @@ export const updateAdvertisement = async (req: Request, res: Response) => {
       categoryId: categoryId !== undefined ? categoryId || null : undefined,
     };
 
-    if (adType && ['CATEGORY', 'TOP', 'FOOTER'].includes(adType)) {
+    if (openInNewTab !== undefined) {
+      updateData.openInNewTab = parseBoolean(openInNewTab);
+    }
+
+    const validAdTypes = ['CATEGORY', 'TOP', 'FOOTER', 'BUSINESS_LISTING', 'BLOG_LISTING', 'HOMEPAGE'];
+    if (adType && validAdTypes.includes(adType)) {
       updateData.adType = adType;
     }
 
@@ -257,6 +266,7 @@ export const getAdvertisements = async (req: Request, res: Response) => {
       countryId,
       isActive,
       adType,
+      search,
     } = req.query;
 
     const skip = (parseInt(page as string, 10) - 1) * parseInt(limit as string, 10);
@@ -267,13 +277,22 @@ export const getAdvertisements = async (req: Request, res: Response) => {
     if (cityId) where.cityId = cityId;
     if (regionId) where.regionId = regionId;
     if (countryId) where.countryId = countryId;
-    if (adType && ['CATEGORY', 'TOP', 'FOOTER'].includes(adType as string)) {
+    const validAdTypes = ['CATEGORY', 'TOP', 'FOOTER', 'BUSINESS_LISTING', 'BLOG_LISTING', 'HOMEPAGE'];
+    if (adType && validAdTypes.includes(adType as string)) {
       where.adType = adType;
     }
 
     const parsedActive = parseBoolean(isActive);
     if (parsedActive !== undefined) {
       where.isActive = parsedActive;
+    }
+
+    // Add search filter
+    if (search && typeof search === 'string') {
+      where.OR = [
+        { title: { contains: search, mode: 'insensitive' } },
+        { notes: { contains: search, mode: 'insensitive' } },
+      ];
     }
 
     const [advertisements, total] = await Promise.all([
@@ -355,8 +374,9 @@ export const getAdvertisementForDisplay = async (req: Request, res: Response) =>
   try {
     const { locationId, locationType, categoryId, adType } = req.query;
 
-    if (!adType || !['CATEGORY', 'TOP', 'FOOTER'].includes(adType as string)) {
-      return sendError(res, 400, 'Ad type is required and must be CATEGORY, TOP, or FOOTER');
+    const validAdTypes = ['CATEGORY', 'TOP', 'FOOTER', 'BUSINESS_LISTING', 'BLOG_LISTING', 'HOMEPAGE'];
+    if (!adType || !validAdTypes.includes(adType as string)) {
+      return sendError(res, 400, `Ad type is required and must be one of: ${validAdTypes.join(', ')}`);
     }
 
     const { cityId, regionId, countryId } = await validateLocationChain(

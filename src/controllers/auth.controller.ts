@@ -114,9 +114,6 @@ export const register = async (req: Request, res: Response) => {
       return sendError(res, 409, 'User with this email or phone already exists');
     }
 
-    // Generate OTP
-    const otp = generateOTP();
-
     // Store registration data temporarily (NOT in database yet)
     storeRegistrationData(email.toLowerCase(), {
       phone,
@@ -126,22 +123,43 @@ export const register = async (req: Request, res: Response) => {
       role: role || 'USER',
     });
 
-    // Store OTP for verification
-    storeOTP(email.toLowerCase(), otp);
+    // Check if Saudi number (+966) - send to phone, otherwise to email
+    const isSaudiNumber = phone.startsWith('+966');
+    
+    if (isSaudiNumber) {
+      // For Saudi numbers, use phone OTP (test: 1234)
+      const otp = '1234';
+      storeOTP(phone, otp);
+      // Skip actual SMS for testing
+      // await sendPhoneOTP(phone, otp);
+      
+      return sendSuccess(
+        res,
+        200,
+        'OTP sent to your phone. Please verify to complete registration.',
+        {
+          phone,
+          otpSent: true,
+          otpTarget: 'phone',
+        }
+      );
+    } else {
+      // For non-Saudi, send to email
+      const otp = generateOTP();
+      storeOTP(email.toLowerCase(), otp);
+      await sendEmailOTP(email, otp);
 
-    // Send OTP to email
-    await sendEmailOTP(email, otp);
-
-    return sendSuccess(
-      res,
-      200,
-      'OTP sent to your email. Please verify to complete registration.',
-      {
-        email,
-        otpSent: true,
-        // DO NOT return userId - user doesn't exist yet!
-      }
-    );
+      return sendSuccess(
+        res,
+        200,
+        'OTP sent to your email. Please verify to complete registration.',
+        {
+          email,
+          otpSent: true,
+          otpTarget: 'email',
+        }
+      );
+    }
   } catch (error) {
     console.error('Register error:', error);
     return sendError(res, 500, 'Failed to register user', error);
@@ -256,9 +274,11 @@ export const sendPhoneOTPController = async (req: Request, res: Response) => {
       return sendError(res, 404, 'User not found');
     }
 
-    const otp = generateOTP();
+    // For testing: always use 1234 for phone OTP
+    const otp = '1234';
     storeOTP(phone, otp);
-    await sendPhoneOTP(phone, otp);
+    // Skip actual SMS sending for testing
+    // await sendPhoneOTP(phone, otp);
 
     return sendSuccess(res, 200, 'OTP sent to phone successfully', { phone });
   } catch (error) {
@@ -270,27 +290,55 @@ export const sendPhoneOTPController = async (req: Request, res: Response) => {
 // Verify Email OTP - Creates user if registration, or logs in if existing user
 export const verifyEmailOTP = async (req: Request, res: Response) => {
   try {
-    const { email, otp } = req.body;
+    const { email, phone, otp } = req.body;
 
-    if (!email || !otp) {
-      return sendError(res, 400, 'Email and OTP are required');
+    if ((!email && !phone) || !otp) {
+      return sendError(res, 400, 'Email or phone and OTP are required');
     }
 
-    const emailLower = email.toLowerCase();
-    const isValid = verifyOTP(emailLower, otp);
+    // Determine if this is phone or email OTP
+    const identifier = phone || email?.toLowerCase();
+    const isPhoneOTP = !!phone;
+    
+    const isValid = verifyOTP(identifier, otp);
 
     if (!isValid) {
       return sendError(res, 401, 'Invalid or expired OTP');
     }
 
     // Check if this is a registration flow (has temporary registration data)
-    const registrationData = getRegistrationData(emailLower);
+    // Registration data is stored by email
+    let registrationData = null;
+    if (email) {
+      registrationData = getRegistrationData(email.toLowerCase());
+    } else if (phone) {
+      // Try to find registration data by phone number
+      // We need to search for the email that matches this phone in registration data
+      // For now, we'll check using the phone's associated email from the stored data
+      const allEmails = Object.keys((globalThis as any).__otpStore || {});
+      for (const storedEmail of allEmails) {
+        const data = getRegistrationData(storedEmail);
+        if (data && data.phone === phone) {
+          registrationData = data;
+          break;
+        }
+      }
+    }
 
     if (registrationData) {
       // REGISTRATION FLOW: Create user now that OTP is verified
+      const userEmail = email?.toLowerCase() || Object.keys((globalThis as any).__otpStore || {}).find(e => {
+        const data = getRegistrationData(e);
+        return data && data.phone === phone;
+      });
+
+      if (!userEmail) {
+        return sendError(res, 400, 'Registration data not found');
+      }
+
       const existingUser = await prisma.user.findFirst({
         where: {
-          OR: [{ email: emailLower }, { phone: registrationData.phone }],
+          OR: [{ email: userEmail }, { phone: registrationData.phone }],
         },
       });
 
@@ -302,13 +350,14 @@ export const verifyEmailOTP = async (req: Request, res: Response) => {
 
       const user = await prisma.user.create({
         data: {
-          email: emailLower,
+          email: userEmail,
           phone: registrationData.phone,
           password: hashedPassword,
           firstName: registrationData.firstName,
           lastName: registrationData.lastName,
           role: registrationData.role as 'USER' | 'BUSINESS_OWNER' | 'ADMIN',
-          emailVerified: true, // Verified via OTP
+          emailVerified: !isPhoneOTP,
+          phoneVerified: isPhoneOTP,
         },
         select: baseUserSelect,
       });
@@ -333,10 +382,9 @@ export const verifyEmailOTP = async (req: Request, res: Response) => {
       });
     } else {
       // LOGIN FLOW: User already exists, just verify and login
-      const user = await prisma.user.findUnique({
-        where: { email: emailLower },
-        select: baseUserSelect,
-      });
+      const user = isPhoneOTP
+        ? await prisma.user.findUnique({ where: { phone }, select: baseUserSelect })
+        : await prisma.user.findUnique({ where: { email: email.toLowerCase() }, select: baseUserSelect });
 
       if (!user) {
         return sendError(res, 404, 'User not found. Please register first.');
@@ -346,11 +394,18 @@ export const verifyEmailOTP = async (req: Request, res: Response) => {
         return sendError(res, 403, 'Account is suspended or inactive');
       }
 
-      // Update email verification status
-      await prisma.user.update({
-        where: { email: emailLower },
-        data: { emailVerified: true },
-      });
+      // Update verification status
+      if (isPhoneOTP) {
+        await prisma.user.update({
+          where: { phone },
+          data: { phoneVerified: true },
+        });
+      } else {
+        await prisma.user.update({
+          where: { email: email.toLowerCase() },
+          data: { emailVerified: true },
+        });
+      }
 
       const token = generateToken({
         userId: user.id,

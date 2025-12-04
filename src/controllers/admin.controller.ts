@@ -669,7 +669,7 @@ export const getAnalytics = async (req: AuthRequest, res: Response) => {
     const months = [];
     const currentDate = new Date();
     
-    // Month names array for reliable formatting (doesn't depend on locale)
+    // Month names array for reliable formatting (doesn't depend on lo  cale)
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
     for (let i = 11; i >= 0; i--) {

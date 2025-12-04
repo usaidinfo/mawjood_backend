@@ -66,6 +66,9 @@ enum AdvertisementType {
   CATEGORY
   TOP
   FOOTER
+  BUSINESS_LISTING
+  BLOG_LISTING
+  HOMEPAGE
 }
 
 model User {
@@ -237,6 +240,7 @@ model Service {
   name        String
   description String?  @db.LongText
   price       Float
+  currency    String   @default("SAR")
   duration    Int?
   image       String?
   youtubeUrl  String?
@@ -401,6 +405,7 @@ model Advertisement {
   title       String
   imageUrl    String
   targetUrl   String?
+  openInNewTab Boolean         @default(true)
   adType      AdvertisementType @default(CATEGORY)
   isActive    Boolean          @default(true)
   startsAt    DateTime?

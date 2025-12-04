@@ -1112,9 +1112,26 @@ export const getBusinessById = async (req: Request, res: Response) => {
       return sendError(res, 404, 'Business not found');
     }
 
-    // Check if business is pending and user is not owner or admin
-    if (business.status === 'PENDING') {
-      if (!userId || (business.userId !== userId && userRole !== 'ADMIN')) {
+    // Business visibility logic:
+    // - APPROVED businesses: visible to everyone
+    // - PENDING/REJECTED/SUSPENDED: only visible to owner and admin
+    const isApproved = business.status === 'APPROVED';
+    const isOwner = userId && business.userId === userId;
+    const isAdmin = userRole === 'ADMIN';
+
+    // If business is not approved, check access rights
+    if (!isApproved) {
+      // Must be owner or admin to view non-approved business
+      if (!isOwner && !isAdmin) {
+        console.log('[ACCESS DENIED] Non-approved business access attempt:', {
+          businessId: business.id,
+          businessStatus: business.status,
+          businessOwnerId: business.userId,
+          requestUserId: userId,
+          requestUserRole: userRole,
+          isOwner,
+          isAdmin
+        });
         return sendError(res, 404, 'Business not found');
       }
     }
@@ -1176,9 +1193,26 @@ export const getBusinessBySlug = async (req: Request, res: Response) => {
       return sendError(res, 404, 'Business not found');
     }
 
-    // Check if business is pending and user is not owner or admin
-    if (business.status === 'PENDING') {
-      if (!userId || (business.userId !== userId && userRole !== 'ADMIN')) {
+    // Business visibility logic:
+    // - APPROVED businesses: visible to everyone
+    // - PENDING/REJECTED/SUSPENDED: only visible to owner and admin
+    const isApproved = business.status === 'APPROVED';
+    const isOwner = userId && business.userId === userId;
+    const isAdmin = userRole === 'ADMIN';
+
+    // If business is not approved, check access rights
+    if (!isApproved) {
+      // Must be owner or admin to view non-approved business
+      if (!isOwner && !isAdmin) {
+        console.log('[ACCESS DENIED] Non-approved business access attempt:', {
+          businessSlug: slug,
+          businessStatus: business.status,
+          businessOwnerId: business.userId,
+          requestUserId: userId,
+          requestUserRole: userRole,
+          isOwner,
+          isAdmin
+        });
         return sendError(res, 404, 'Business not found');
       }
     }
@@ -1645,7 +1679,7 @@ export const addService = async (req: AuthRequest, res: Response) => {
   try {
     const { businessId } = req.params;
     const userId = req.user?.userId;
-    const { name, description, price, duration, youtubeUrl } = req.body;
+    const { name, description, price, currency, duration, youtubeUrl } = req.body;
 
     if (!name || !price) {
       return sendError(res, 400, 'Name and price are required');
@@ -1676,6 +1710,7 @@ export const addService = async (req: AuthRequest, res: Response) => {
         name,
         description,
         price: parseFloat(price),
+        currency: currency || 'SAR',
         duration: duration ? parseInt(duration as string, 10) : null,
         image,
         youtubeUrl: youtubeUrl || null,
@@ -1712,7 +1747,7 @@ export const updateService = async (req: AuthRequest, res: Response) => {
   try {
     const { serviceId } = req.params;
     const userId = req.user?.userId;
-    const { name, description, price, duration, youtubeUrl } = req.body;
+    const { name, description, price, currency, duration, youtubeUrl } = req.body;
 
     const service = await prisma.service.findUnique({
       where: { id: serviceId },
@@ -1733,6 +1768,7 @@ export const updateService = async (req: AuthRequest, res: Response) => {
       name,
       description,
       price: price ? parseFloat(price) : undefined,
+      currency: currency !== undefined ? currency : undefined,
       duration: duration ? parseInt(duration as string, 10) : undefined,
       youtubeUrl: youtubeUrl !== undefined ? (youtubeUrl || null) : undefined,
     };
