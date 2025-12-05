@@ -19,8 +19,11 @@ PAYTABS_PROFILE_ID="120336"
 PAYTABS_API_URL="https://secure.paytabs.sa"
 PAYTABS_CURRENCY="SAR"
 PAYTABS_CALLBACK_URL="http://localhost:5000/api/payments/paytabs/callback"
-PAYTABS_RETURN_URL="http://localhost:3000/dashboard/payments/success"
+PAYTABS_RETURN_URL="http://localhost:5000/api/payments/paytabs/return"
+FRONTEND_URL="http://localhost:3000"
 ```
+
+**⚠️ IMPORTANT:** The `PAYTABS_RETURN_URL` must point to the **BACKEND** endpoint, NOT the frontend page. The backend handles verification and then redirects to the appropriate frontend page.
 
 #### Production Environment
 ```env
@@ -28,8 +31,9 @@ PAYTABS_SERVER_KEY="SBJ9L6R9JB-JL9K2N6LTW-DNTGM26JT9"
 PAYTABS_PROFILE_ID="120336"
 PAYTABS_API_URL="https://secure.paytabs.sa"
 PAYTABS_CURRENCY="SAR"
-PAYTABS_CALLBACK_URL="https://yourdomain.com/api/payments/paytabs/callback"
-PAYTABS_RETURN_URL="https://yourdomain.com/dashboard/payments/success"
+PAYTABS_CALLBACK_URL="https://api.yourdomain.com/api/payments/paytabs/callback"
+PAYTABS_RETURN_URL="https://api.yourdomain.com/api/payments/paytabs/return"
+FRONTEND_URL="https://yourdomain.com"
 ```
 
 ### Frontend Configuration

@@ -8,4 +8,3 @@ router.get('/site', getSiteSettings);
 router.patch('/site', authenticate, authorize('ADMIN'), updateSiteSettings);
 
 export default router;
-

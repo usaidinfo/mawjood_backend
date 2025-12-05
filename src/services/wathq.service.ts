@@ -131,17 +131,13 @@ class WathqService {
         throw new Error('CR number must be exactly 10 digits');
       }
 
-      console.log('🔑 Wathq API Request:');
-      console.log('URL:', `${this.config.baseUrl}/info/${crNumber}`);
-      console.log('apiKey header:', this.config.consumerKey);
-
       const response = await axios.get(`${this.config.baseUrl}/info/${crNumber}`, {
         params: { language },
         headers: {
-          'apiKey': this.config.consumerKey,
+          Authorization: `Basic ${this.apiKey}`,
           'Content-Type': 'application/json',
         },
-        timeout: 30000, // 30 seconds
+        timeout: 30000,
       });
 
       return {
@@ -179,14 +175,10 @@ class WathqService {
         throw new Error('CR number must be exactly 10 digits');
       }
 
-      console.log('🔑 Wathq API Request (Full):');
-      console.log('URL:', `${this.config.baseUrl}/fullinfo/${crNumber}`);
-      console.log('apiKey header:', this.config.consumerKey);
-
       const response = await axios.get(`${this.config.baseUrl}/fullinfo/${crNumber}`, {
         params: { language },
         headers: {
-          'apiKey': this.config.consumerKey,
+          Authorization: `Basic ${this.apiKey}`,
           'Content-Type': 'application/json',
         },
         timeout: 30000, // 30 seconds
@@ -240,7 +232,7 @@ class WathqService {
       const response = await axios.get(`${this.config.baseUrl}/status/${crNumber}`, {
         params: { language, includeDates },
         headers: {
-          'apiKey': this.config.consumerKey,
+          Authorization: `Basic ${this.apiKey}`,
           'Content-Type': 'application/json',
         },
         timeout: 30000,
@@ -288,7 +280,7 @@ class WathqService {
         {
           params,
           headers: {
-            'apiKey': this.config.consumerKey,
+            Authorization: `Basic ${this.apiKey}`,
             'Content-Type': 'application/json',
           },
           timeout: 30000,
