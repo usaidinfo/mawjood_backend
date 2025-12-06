@@ -15,7 +15,8 @@ const router = Router();
 
 // PayTabs callback/webhook routes (no auth - verified by PayTabs API)
 router.post('/paytabs/callback', handlePayTabsCallback);
-router.get('/paytabs/return', handlePayTabsReturn);
+// Accept both GET and POST for return URL to avoid 405 from PayTabs
+router.all('/paytabs/return', handlePayTabsReturn);
 
 // Protected routes
 router.get('/my-payments', authenticate, getUserPayments);

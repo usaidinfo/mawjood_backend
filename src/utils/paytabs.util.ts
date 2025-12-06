@@ -177,16 +177,18 @@ export class PayTabsService {
    * Parse payment status from callback response
    */
   parsePaymentStatus(responseStatus: string): 'COMPLETED' | 'FAILED' | 'PENDING' {
-    switch (responseStatus) {
+    const code = (responseStatus || '').toUpperCase();
+    switch (code) {
       case 'A': // Approved
+      case 'S': // Sometimes returned as Success
         return 'COMPLETED';
       case 'D': // Declined
       case 'E': // Error
       case 'V': // Voided
+      case 'C': // Cancelled
         return 'FAILED';
       case 'H': // On Hold
       case 'P': // Pending
-        return 'PENDING';
       default:
         return 'PENDING';
     }

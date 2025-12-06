@@ -354,43 +354,58 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
 // PayTabs Return Handler (for redirecting user after payment)
 export const handlePayTabsReturn = async (req: Request, res: Response) => {
   try {
-    const { tranRef, cartId } = req.query;
+    // PayTabs may send GET or POST to the return URL; accept both.
+    const tranRef =
+      (req.query.tranRef as string) ||
+      (req.query.tran_ref as string) ||
+      (req.body?.tranRef as string) ||
+      (req.body?.tran_ref as string);
+    const cartId =
+      (req.query.cartId as string) ||
+      (req.query.cart_id as string) ||
+      (req.body?.cartId as string) ||
+      (req.body?.cart_id as string);
+
+    const frontendBase = process.env.FRONTEND_URL || 'http://localhost:3000';
 
     if (!tranRef || !cartId) {
-      return res.redirect(`${process.env.FRONTEND_URL}/dashboard/payments/failed?error=invalid_params`);
+      return res.redirect(`${frontendBase}/dashboard/payments/failed?error=invalid_params`);
     }
 
-    // Verify payment status
-    const verificationResult = await paytabsService.verifyPayment(tranRef as string);
+    // Verify payment status server-to-server to avoid trusting query params
+    const verificationResult = await paytabsService.verifyPayment(tranRef);
     const paymentStatus = paytabsService.parsePaymentStatus(
       verificationResult.payment_result?.response_status
     );
 
     const payment = await prisma.payment.findUnique({
-      where: { id: cartId as string },
+      where: { id: cartId },
     });
 
     if (!payment) {
-      return res.redirect(`${process.env.FRONTEND_URL}/dashboard/payments/failed?error=payment_not_found`);
+      return res.redirect(`${frontendBase}/dashboard/payments/failed?error=payment_not_found`);
     }
 
     // Redirect based on payment status
     if (paymentStatus === 'COMPLETED') {
       return res.redirect(
-        `${process.env.FRONTEND_URL}/dashboard/payments/success?paymentId=${payment.id}&tranRef=${tranRef}`
-      );
-    } else if (paymentStatus === 'FAILED') {
-      return res.redirect(
-        `${process.env.FRONTEND_URL}/dashboard/payments/failed?paymentId=${payment.id}&tranRef=${tranRef}`
-      );
-    } else {
-      return res.redirect(
-        `${process.env.FRONTEND_URL}/dashboard/payments/pending?paymentId=${payment.id}&tranRef=${tranRef}`
+        `${frontendBase}/dashboard/payments/success?paymentId=${payment.id}&tranRef=${tranRef}`
       );
     }
+
+    if (paymentStatus === 'FAILED') {
+      return res.redirect(
+        `${frontendBase}/dashboard/payments/failed?paymentId=${payment.id}&tranRef=${tranRef}`
+      );
+    }
+
+    return res.redirect(
+      `${frontendBase}/dashboard/payments/pending?paymentId=${payment.id}&tranRef=${tranRef}`
+    );
   } catch (error) {
     console.error('PayTabs return error:', error);
-    return res.redirect(`${process.env.FRONTEND_URL}/dashboard/payments/failed?error=processing_error`);
+    const frontendBase = process.env.FRONTEND_URL || 'http://localhost:3000';
+    return res.redirect(`${frontendBase}/dashboard/payments/failed?error=processing_error`);
   }
 };
 
