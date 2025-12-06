@@ -28,7 +28,7 @@ export const paytabsConfig = {
 };
 
 export const validatePaytabsConfig = (): boolean => {
-  const required = ['serverKey', 'profileId', 'apiUrl'];
+  const required = ['serverKey', 'profileId', 'apiUrl', 'callbackUrl', 'returnUrl'];
   return required.every((key) => !!paytabsConfig[key as keyof typeof paytabsConfig]);
 };
 

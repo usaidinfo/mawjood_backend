@@ -76,7 +76,7 @@ export const getBusinessPayments = async (req: AuthRequest, res: Response) => {
 export const createPayment = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.userId;
-    const { businessId, amount, currency, description, returnUrl } = req.body;
+    const { businessId, amount, currency, description } = req.body;
 
     if (!businessId || !amount) {
       return sendError(res, 400, 'Business ID and amount are required');
@@ -149,7 +149,7 @@ export const createPayment = async (req: AuthRequest, res: Response) => {
           zip: '00000',
         },
         paytabsConfig.callbackUrl,
-        returnUrl || paytabsConfig.returnUrl
+        paytabsConfig.returnUrl // enforce backend return URL to avoid misconfiguration/405s
       );
 
       // Update payment with PayTabs transaction reference
