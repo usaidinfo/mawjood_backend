@@ -272,27 +272,46 @@ export const getAdvertisements = async (req: Request, res: Response) => {
     const skip = (parseInt(page as string, 10) - 1) * parseInt(limit as string, 10);
 
     const where: any = {};
+    const andConditions: any[] = [];
 
-    if (categoryId) where.categoryId = categoryId;
-    if (cityId) where.cityId = cityId;
-    if (regionId) where.regionId = regionId;
-    if (countryId) where.countryId = countryId;
+    // Build filter conditions
+    if (categoryId) andConditions.push({ categoryId });
+    if (cityId) andConditions.push({ cityId });
+    if (regionId) andConditions.push({ regionId });
+    if (countryId) andConditions.push({ countryId });
+    
     const validAdTypes = ['CATEGORY', 'TOP', 'FOOTER', 'BUSINESS_LISTING', 'BLOG_LISTING', 'HOMEPAGE'];
     if (adType && validAdTypes.includes(adType as string)) {
-      where.adType = adType;
+      andConditions.push({ adType });
     }
 
     const parsedActive = parseBoolean(isActive);
     if (parsedActive !== undefined) {
-      where.isActive = parsedActive;
+      andConditions.push({ isActive: parsedActive });
     }
 
-    // Add search filter
-    if (search && typeof search === 'string') {
-      where.OR = [
-        { title: { contains: search, mode: 'insensitive' } },
-        { notes: { contains: search, mode: 'insensitive' } },
-      ];
+
+    if (search && typeof search === 'string' && search.trim().length > 0) {
+      const searchTerm = search.trim();
+      andConditions.push({
+        OR: [
+          {
+            title: {
+              contains: searchTerm,
+            },
+          },
+          {
+            notes: {
+              contains: searchTerm,
+            },
+          },
+        ],
+      });
+    }
+
+    // Combine all conditions with AND
+    if (andConditions.length > 0) {
+      where.AND = andConditions;
     }
 
     const [advertisements, total] = await Promise.all([
