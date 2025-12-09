@@ -449,6 +449,7 @@ model SubscriptionPlan {
   billingInterval        SubscriptionInterval @default(MONTH)
   intervalCount          Int      @default(1)
   customIntervalDays     Int?
+  isSponsorPlan          Boolean  @default(false) // Admin-only sponsor plan, not visible to public
   verifiedBadge          Boolean  @default(false)
   topPlacement           Boolean  @default(false)
   allowAdvertisements    Boolean  @default(false)
@@ -470,6 +471,7 @@ model SubscriptionPlan {
 
   @@index([status])
   @@index([billingInterval, intervalCount])
+  @@index([isSponsorPlan])
 }
 
 model BusinessSubscription {

@@ -551,6 +551,185 @@ export const checkExpiringSubscriptions = async (_req: Request, res: Response) =
 };
 
 // Get all subscriptions (Admin only)
+// Admin-only: Assign sponsor subscription to a business (no payment required)
+export const assignSponsorSubscription = async (req: AuthRequest, res: Response) => {
+  try {
+    const { businessId, planId, startDate, endsAt, notes } = req.body;
+    const userRole = req.user?.role;
+    const userId = req.user?.userId;
+
+    // Only admins can assign sponsor subscriptions
+    if (userRole !== 'ADMIN') {
+      return sendError(res, 403, 'Only administrators can assign sponsor subscriptions');
+    }
+
+    if (!businessId) {
+      return sendError(res, 400, 'businessId is required');
+    }
+
+    // Find business
+    const business = await prismaClient.business.findUnique({ where: { id: businessId } });
+
+    if (!business) {
+      return sendError(res, 404, 'Business not found');
+    }
+
+    // Find or create default sponsor plan
+    let plan;
+    if (planId) {
+      plan = await prismaClient.subscriptionPlan.findUnique({ where: { id: planId } });
+      if (!plan) {
+        return sendError(res, 404, 'Subscription plan not found');
+      }
+      // Verify it's a sponsor plan if provided (only if column exists)
+      if (plan.isSponsorPlan === false) {
+        return sendError(res, 400, 'Selected plan is not a sponsor plan. Use regular subscription creation for non-sponsor plans.');
+      }
+    } else {
+      // Auto-create or find default sponsor plan
+      try {
+        plan = await prismaClient.subscriptionPlan.findFirst({
+          where: { isSponsorPlan: true, status: 'ACTIVE' },
+          orderBy: { createdAt: 'desc' },
+        });
+      } catch (error: any) {
+        // If column doesn't exist, plan will be null and we'll create one
+        if (error.code === 'P2022' && error.meta?.column?.includes('isSponsorPlan')) {
+          console.warn('isSponsorPlan column does not exist yet - will create plan without it');
+          plan = null;
+        } else {
+          throw error;
+        }
+      }
+
+      if (!plan) {
+        // Create default sponsor plan automatically
+        const adminUser = await prismaClient.user.findFirst({
+          where: { role: 'ADMIN' },
+          select: { id: true },
+        });
+
+        const planData: any = {
+          name: 'Sponsor Access',
+          slug: `sponsor-access-${Date.now()}`,
+          description: 'Default sponsor access plan - grants all premium features',
+          price: new Prisma.Decimal(0),
+          currency: 'SAR',
+          status: 'ACTIVE',
+          billingInterval: 'YEARLY',
+          intervalCount: 1,
+          verifiedBadge: true,
+          topPlacement: true,
+          allowAdvertisements: true,
+          maxAdvertisements: 999,
+          createdById: adminUser?.id || userId || null,
+        };
+
+        // Only add isSponsorPlan if column exists
+        try {
+          // Try to check if column exists by attempting a query
+          await prismaClient.$queryRaw`SELECT isSponsorPlan FROM SubscriptionPlan LIMIT 1`;
+          planData.isSponsorPlan = true;
+        } catch (error: any) {
+          // Column doesn't exist - skip it
+          console.warn('isSponsorPlan column does not exist - creating plan without it');
+        }
+
+        try {
+          plan = await prismaClient.subscriptionPlan.create({
+            data: planData,
+          });
+          console.log('Created default sponsor plan:', plan.id);
+        } catch (error: any) {
+          console.error('Failed to create sponsor plan:', error);
+          return sendError(res, 500, 'Failed to create default sponsor plan. Please create a sponsor plan manually first.', error);
+        }
+      }
+    }
+
+    // Ensure plan is defined
+    if (!plan || !plan.id) {
+      console.error('Plan is not defined after creation/finding');
+      return sendError(res, 500, 'Failed to find or create sponsor plan');
+    }
+
+    const startsAt = startDate ? new Date(startDate) : new Date();
+    let calculatedEndsAt: Date;
+    
+    if (endsAt) {
+      calculatedEndsAt = new Date(endsAt);
+    } else {
+      calculatedEndsAt = computeEndDate(startsAt, plan.billingInterval, plan.intervalCount, plan.customIntervalDays);
+    }
+
+    // Create subscription with ACTIVE status (no payment required for sponsor plans)
+    const subscription = await prismaClient.businessSubscription.create({
+      data: {
+        businessId,
+        planId: plan.id, // Use the plan we found/created, not the request parameter
+        status: 'ACTIVE',
+        startedAt: startsAt,
+        endsAt: calculatedEndsAt,
+        price: plan.price,
+        discountAmount: plan.price, // Full discount for sponsor plans
+        totalAmount: new Prisma.Decimal(0), // Free for sponsor plans
+        paymentReference: `SPONSOR-${Date.now()}`,
+        paymentProvider: 'SPONSOR',
+        notes: notes || 'Sponsor subscription assigned by admin',
+        metadata: { isSponsorSubscription: true, assignedBy: userId },
+        createdById: userId ?? null,
+      },
+    });
+
+    const updateData: any = {
+      currentSubscriptionId: subscription.id,
+      subscriptionStartedAt: startsAt,
+      subscriptionExpiresAt: calculatedEndsAt,
+      canCreateAdvertisements: true, 
+      promotedUntil: calculatedEndsAt, 
+      isVerified: true, 
+    };
+
+    console.log('Updating business with sponsor features:', {
+      businessId,
+      updateData,
+      planFeatures: {
+        verifiedBadge: plan.verifiedBadge,
+        topPlacement: plan.topPlacement,
+        allowAdvertisements: plan.allowAdvertisements,
+      },
+    });
+
+    const updatedBusiness = await prismaClient.business.update({
+      where: { id: businessId },
+      data: updateData,
+    });
+
+    console.log('Business updated successfully:', {
+      id: updatedBusiness.id,
+      isVerified: updatedBusiness.isVerified,
+      promotedUntil: updatedBusiness.promotedUntil,
+      canCreateAdvertisements: updatedBusiness.canCreateAdvertisements,
+    });
+
+    // Create notification for business owner
+    await prismaClient.notification.create({
+      data: {
+        userId: business.userId,
+        type: 'SUBSCRIPTION_ACTIVE',
+        title: 'Sponsor Access Granted! 🎉',
+        message: `Your business "${business.name}" has been granted ${plan.name} access by our team. Enjoy all premium features!`,
+        link: `/dashboard/subscriptions`,
+      },
+    });
+
+    return sendSuccess(res, 201, 'Sponsor subscription assigned successfully', subscription);
+  } catch (error) {
+    console.error('Assign sponsor subscription error:', error);
+    return sendError(res, 500, 'Failed to assign sponsor subscription', error);
+  }
+};
+
 export const getAllSubscriptions = async (req: Request, res: Response) => {
   try {
     const { page = '1', limit = '100', status, businessId, search, startDate, endDate } = req.query;

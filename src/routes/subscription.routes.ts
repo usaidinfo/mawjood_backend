@@ -7,6 +7,7 @@ import {
   syncExpiredSubscriptions,
   getAllSubscriptions,
   checkExpiringSubscriptions,
+  assignSponsorSubscription,
 } from '../controllers/subscription.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 
@@ -21,6 +22,7 @@ router.get('/', authenticate, getBusinessSubscriptions);
 router.get('/admin/all', authenticate, authorize('ADMIN'), getAllSubscriptions);
 router.get('/:id', authenticate, getBusinessSubscriptionById);
 router.post('/', authenticate, createBusinessSubscription);
+router.post('/admin/assign-sponsor', authenticate, authorize('ADMIN'), assignSponsorSubscription);
 router.patch('/:id/cancel', authenticate, cancelBusinessSubscription);
 
 export default router;
