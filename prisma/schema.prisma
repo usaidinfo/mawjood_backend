@@ -93,6 +93,7 @@ model User {
   createdSubscriptionPlans SubscriptionPlan[]
   createdSubscriptions     BusinessSubscription[]
   createdAdvertisements Advertisement[]
+  createdTouristPlaces TouristPlace[]
   
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
@@ -151,6 +152,7 @@ model City {
   
   businesses Business[]
   advertisements Advertisement[]
+  touristPlaces TouristPlace[]
   
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -500,4 +502,70 @@ model BusinessSubscription {
   @@index([businessId, status])
   @@index([planId, status])
   @@index([status, endsAt])
+}
+
+model TouristPlace {
+  id              String   @id @default(cuid())
+  title           String
+  slug            String   @unique
+  subtitle        String?  // "Welcome to the Capital City of India"
+  galleryImages   Json?    // Array of image URLs
+  about           String?  @db.LongText
+  metaTitle       String?
+  metaDescription String?
+  keywords        Json?
+  isActive        Boolean  @default(true)
+  
+  cityId          String
+  city            City     @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  
+  bestTimeToVisit Json?    // { winter: {...}, summer: {...}, monsoon: {...} }
+  
+  createdById     String?
+  createdBy       User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  
+  attractions     TouristPlaceAttraction[]
+  businessSections TouristPlaceBusinessSection[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([slug])
+  @@index([cityId])
+  @@index([isActive])
+}
+
+model TouristPlaceAttraction {
+  id              String   @id @default(cuid())
+  name            String
+  image           String
+  rating          Float?   @default(0)
+  description     String?  @db.Text
+  openTime        String?  // e.g., "09:30 am"
+  closeTime       String?  // e.g., "05:30 pm"
+  status          String?  // e.g., "Open now", "Closed", "Opens at 09:30 am Tomorrow"
+  order           Int      @default(0)
+  
+  touristPlaceId  String
+  touristPlace    TouristPlace @relation(fields: [touristPlaceId], references: [id], onDelete: Cascade)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([touristPlaceId, order])
+}
+
+model TouristPlaceBusinessSection {
+  id              String   @id @default(cuid())
+  title           String   // e.g., "Top Hotels in Delhi", "Top Restaurants in Riyadh"
+  categoryIds     Json     // Array of category IDs to filter businesses
+  order           Int      @default(0)
+  
+  touristPlaceId  String
+  touristPlace    TouristPlace @relation(fields: [touristPlaceId], references: [id], onDelete: Cascade)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([touristPlaceId, order])
 }

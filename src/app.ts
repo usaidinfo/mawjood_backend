@@ -23,6 +23,7 @@ import subscriptionRoutes from './routes/subscription.routes';
 import sitemapRoutes from './routes/sitemap.routes';
 import contactRoutes from './routes/contact.routes';
 import crRoutes from './routes/cr.routes';
+import touristPlaceRoutes from './routes/touristPlace.routes';
 
 // Import routes
 import authRoutes from './routes/auth.routes';
@@ -72,6 +73,7 @@ app.use('/api/subscription-plans', subscriptionPlanRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/cr', crRoutes);
+app.use('/api/tourist-places', touristPlaceRoutes);
 app.use('/', sitemapRoutes);
 
 // Health check
