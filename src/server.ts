@@ -7,8 +7,19 @@ const ENABLE_CRON_JOBS = process.env.ENABLE_CRON_JOBS === 'true';
 
 const startServer = async () => {
   try {
+    // Test database connection with a simple query
     await prisma.$connect();
+    await prisma.$queryRaw`SELECT 1`;
     console.log('✅ Database connected successfully');
+    
+    // Log connection pool info if available
+    const dbUrl = process.env.DATABASE_URL || '';
+    if (dbUrl.includes('connection_limit')) {
+      console.log('✅ Connection pooling configured in DATABASE_URL');
+    } else {
+      console.warn('⚠️  Consider adding connection_limit to DATABASE_URL to prevent connection exhaustion');
+      console.warn('   Example: mysql://user:pass@host:3306/db?connection_limit=5&pool_timeout=20');
+    }
 
     initializeCronJobs();
 

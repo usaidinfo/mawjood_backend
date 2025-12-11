@@ -21,6 +21,9 @@ const prisma =
         url: process.env.DATABASE_URL,
       },
     },
+    // Connection pool settings to prevent connection exhaustion
+    // IMPORTANT: Also add connection_limit parameter to DATABASE_URL in .env
+    // Example: mysql://user:pass@host:3306/db?connection_limit=5&pool_timeout=20
   });
 
 // Store the instance globally to reuse across invocations

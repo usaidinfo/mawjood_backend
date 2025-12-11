@@ -71,6 +71,13 @@ enum AdvertisementType {
   HOMEPAGE
 }
 
+enum EnquiryStatus {
+  OPEN
+  IN_PROGRESS
+  CLOSED
+  REJECTED
+}
+
 model User {
   id            String      @id @default(cuid())
   email         String      @unique
@@ -94,6 +101,7 @@ model User {
   createdSubscriptions     BusinessSubscription[]
   createdAdvertisements Advertisement[]
   createdTouristPlaces TouristPlace[]
+  enquiries     Enquiry[]
   
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
@@ -226,6 +234,7 @@ model Business {
   payments        Payment[]
   subscriptions   BusinessSubscription[] @relation("BusinessSubscriptions")
   currentSubscription BusinessSubscription? @relation("BusinessCurrentSubscription", fields: [currentSubscriptionId], references: [id])
+  enquiries       Enquiry[]
   
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
@@ -568,4 +577,30 @@ model TouristPlaceBusinessSection {
   updatedAt       DateTime @updatedAt
   
   @@index([touristPlaceId, order])
+}
+
+model Enquiry {
+  id            String        @id @default(cuid())
+  name          String
+  phone         String
+  email         String
+  message       String        @db.Text
+  status        EnquiryStatus @default(OPEN)
+  response      String?       @db.Text
+  responseDate  DateTime?
+  
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  businessId   String
+  business      Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  
+  @@index([userId])
+  @@index([businessId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([businessId, status])
 }
