@@ -3,7 +3,14 @@ import prisma from '../config/database';
 import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest } from '../types';
 import { emailService } from '../services/email.service';
-import { EnquiryStatus } from '@prisma/client';
+
+// Define EnquiryStatus enum locally until Prisma Client is regenerated
+enum EnquiryStatus {
+  OPEN = 'OPEN',
+  IN_PROGRESS = 'IN_PROGRESS',
+  CLOSED = 'CLOSED',
+  REJECTED = 'REJECTED',
+}
 
 const prismaClient = prisma as any;
 
@@ -158,95 +165,6 @@ export const createEnquiry = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * Get all enquiries (Admin only)
- */
-export const getAllEnquiries = async (req: AuthRequest, res: Response) => {
-  try {
-    const userRole = req.user?.role;
-    if (userRole !== 'ADMIN') {
-      return sendError(res, 403, 'Forbidden. Admin access required.');
-    }
-
-    const {
-      page = '1',
-      limit = '20',
-      status,
-      search,
-      startDate,
-      endDate,
-    } = req.query;
-
-    const where: any = {};
-
-    if (status && typeof status === 'string') {
-      where.status = status;
-    }
-
-    if (search && typeof search === 'string') {
-      where.OR = [
-        { name: { contains: search } },
-        { email: { contains: search } },
-        { phone: { contains: search } },
-        { message: { contains: search } },
-        { business: { name: { contains: search } } },
-      ];
-    }
-
-    if (startDate || endDate) {
-      where.createdAt = {};
-      if (startDate) {
-        where.createdAt.gte = new Date(startDate as string);
-      }
-      if (endDate) {
-        where.createdAt.lte = new Date(endDate as string);
-      }
-    }
-
-    const [enquiries, total] = await Promise.all([
-      prismaClient.enquiry.findMany({
-        where,
-        include: {
-          user: {
-            select: {
-              id: true,
-              email: true,
-              firstName: true,
-              lastName: true,
-            },
-          },
-          business: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-              email: true,
-              phone: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-        take: parseInt(limit as string),
-        skip: (parseInt(page as string) - 1) * parseInt(limit as string),
-      }),
-      prismaClient.enquiry.count({ where }),
-    ]);
-
-    return sendSuccess(res, 200, 'Enquiries fetched successfully', {
-      enquiries,
-      pagination: {
-        page: parseInt(page as string),
-        limit: parseInt(limit as string),
-        total,
-        pages: Math.ceil(total / parseInt(limit as string)),
-      },
-    });
-  } catch (error: any) {
-    console.error('Get all enquiries error:', error);
-    return sendError(res, 500, 'Failed to fetch enquiries', error);
-  }
-};
-
-/**
  * Get enquiries for a specific business (Business Owner only)
  */
 export const getBusinessEnquiries = async (req: AuthRequest, res: Response) => {
@@ -388,9 +306,7 @@ export const getEnquiryById = async (req: AuthRequest, res: Response) => {
     }
 
     // Check permissions
-    if (userRole === 'ADMIN') {
-      // Admin can see all
-    } else if (userRole === 'BUSINESS_OWNER') {
+    if (userRole === 'BUSINESS_OWNER') {
       // Business owner can only see their own business enquiries
       if (enquiry.business.userId !== userId) {
         return sendError(res, 403, 'Forbidden');
@@ -450,15 +366,13 @@ export const updateEnquiryStatus = async (req: AuthRequest, res: Response) => {
       return sendError(res, 404, 'Enquiry not found');
     }
 
-    // Check permissions
-    if (userRole === 'ADMIN') {
-      // Admin can update any enquiry
-    } else if (userRole === 'BUSINESS_OWNER') {
-      // Business owner can only update their own business enquiries
-      if (enquiry.business.userId !== userId) {
-        return sendError(res, 403, 'Forbidden');
-      }
-    } else {
+    // Check permissions - Only business owners can update enquiries
+    if (userRole !== 'BUSINESS_OWNER') {
+      return sendError(res, 403, 'Forbidden. Only business owners can update enquiries.');
+    }
+
+    // Business owner can only update their own business enquiries
+    if (enquiry.business.userId !== userId) {
       return sendError(res, 403, 'Forbidden');
     }
 
@@ -550,7 +464,7 @@ export const updateEnquiryStatus = async (req: AuthRequest, res: Response) => {
             type: 'ENQUIRY_RESPONSE',
             title: 'Response to Your Enquiry',
             message: `You have received a response from ${enquiry.business.name}`,
-            link: `/enquiries/${id}`,
+            link: `/dashboard/enquiries?enquiryId=${id}`,
           },
         });
       } catch (emailError) {
