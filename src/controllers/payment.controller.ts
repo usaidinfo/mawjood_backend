@@ -405,18 +405,20 @@ export const handlePayTabsReturn = async (req: Request, res: Response) => {
 
     // Verify payment status server-to-server for security (but don't fail if verification fails)
     try {
+      console.log('PayTabs Return Handler - Verifying payment with PayTabs API...');
       const verificationResult = await paytabsService.verifyPayment(tranRef);
       const verifiedStatus = paytabsService.parsePaymentStatus(
         verificationResult.payment_result?.response_status
       );
-      // Use verified status if available, otherwise use status from body
       if (verifiedStatus) {
         paymentStatus = verifiedStatus;
         console.log('PayTabs Return Handler - Verified status:', paymentStatus);
+      } else {
+        console.log('PayTabs Return Handler - No verified status, using status from body');
       }
-    } catch (verifyError) {
-      // Log verification error but continue with status from body
-      console.warn('PayTabs Return Handler - Verification failed, using status from body:', verifyError);
+    } catch (verifyError: any) {
+      console.warn('PayTabs Return Handler - Verification failed, using status from body');
+      console.warn('PayTabs Return Handler - Verification error:', verifyError?.message || verifyError);
     }
 
     // Build redirect URL
@@ -430,9 +432,17 @@ export const handlePayTabsReturn = async (req: Request, res: Response) => {
     }
 
     console.log('PayTabs Return Handler - Redirecting to:', redirectUrl);
-    return res.redirect(redirectUrl);
-  } catch (error) {
+    
+    // For POST requests, use 303 See Other status code to ensure browser follows redirect
+    // For GET requests, use standard 302 redirect
+    if (req.method === 'POST') {
+      return res.redirect(303, redirectUrl);
+    } else {
+      return res.redirect(302, redirectUrl);
+    }
+  } catch (error: any) {
     console.error('PayTabs return error:', error);
+    console.error('PayTabs return error stack:', error?.stack);
     const frontendBase = process.env.FRONTEND_URL || 'https://mawjoodfrontend.vercel.app';
     
     // Build error redirect URL with available parameters
@@ -445,7 +455,13 @@ export const handlePayTabsReturn = async (req: Request, res: Response) => {
     }
     
     console.log('PayTabs Return Handler - Error redirect to:', errorUrl);
-    return res.redirect(errorUrl);
+    
+    // Use 303 for POST requests, 302 for GET
+    if (req.method === 'POST') {
+      return res.redirect(303, errorUrl);
+    } else {
+      return res.redirect(302, errorUrl);
+    }
   }
 };
 
