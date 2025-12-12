@@ -434,12 +434,24 @@ export const checkExpiringSubscriptions = async (_req: Request, res: Response) =
     const oneDayFromNow = new Date(now);
     oneDayFromNow.setDate(oneDayFromNow.getDate() + 1);
 
+    // IMPORTANT: Only check ACTIVE subscriptions for expiry
+    // PENDING subscriptions should NEVER receive expiry emails since they're not activated yet
+    // Also ensure the subscription has a payment reference (meaning payment was completed)
     const expiringSubscriptions = await prismaClient.businessSubscription.findMany({
       where: {
-        status: 'ACTIVE',
+        status: 'ACTIVE', // Only ACTIVE subscriptions can expire
+        paymentReference: {
+          not: null, // Must have a payment reference (payment was completed)
+        },
         endsAt: {
           gte: now,
           lte: sevenDaysFromNow,
+        },
+        // Explicitly exclude PENDING, FAILED, CANCELLED, and EXPIRED subscriptions
+        NOT: {
+          status: {
+            in: ['PENDING', 'FAILED', 'CANCELLED', 'EXPIRED'],
+          },
         },
       },
       include: {
@@ -463,6 +475,8 @@ export const checkExpiringSubscriptions = async (_req: Request, res: Response) =
       },
     });
 
+    console.log(`[Expiry Check] Found ${expiringSubscriptions.length} ACTIVE subscriptions expiring in the next 7 days`);
+
     if (!expiringSubscriptions.length) {
       return sendSuccess(res, 200, 'No expiring subscriptions found', { processed: 0 });
     }
@@ -471,8 +485,29 @@ export const checkExpiringSubscriptions = async (_req: Request, res: Response) =
     const nowTime = now.getTime();
 
     for (const subscription of expiringSubscriptions) {
+      if (subscription.status !== 'ACTIVE') {
+        console.warn(`[Expiry Check] Skipping subscription ${subscription.id} - status is ${subscription.status}, not ACTIVE`);
+        continue;
+      }
+
+      if (subscription.paymentReference && !subscription.paymentReference.startsWith('SPONSOR-')) {
+        const payment = await prisma.payment.findFirst({
+          where: {
+            transactionId: subscription.paymentReference,
+            status: 'COMPLETED',
+          },
+        });
+
+        if (!payment) {
+          console.warn(`[Expiry Check] Skipping subscription ${subscription.id} - associated payment ${subscription.paymentReference} is not COMPLETED`);
+          continue;
+        }
+      }
+
       const endsAtTime = new Date(subscription.endsAt).getTime();
       const daysUntilExpiry = Math.ceil((endsAtTime - nowTime) / (1000 * 60 * 60 * 24));
+      
+      console.log(`[Expiry Check] Processing subscription ${subscription.id} for business ${subscription.business.name} - expires in ${daysUntilExpiry} days`);
 
       const existingNotification = await prismaClient.notification.findFirst({
         where: {
