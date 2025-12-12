@@ -22,8 +22,8 @@ export const getAllTouristPlaces = async (req: Request, res: Response) => {
       const searchTerm = (search as string).trim();
       if (searchTerm.length) {
         where.OR = [
-          { title: { contains: searchTerm, mode: 'insensitive' } },
-          { subtitle: { contains: searchTerm, mode: 'insensitive' } },
+          { title: { contains: searchTerm } },
+          { subtitle: { contains: searchTerm } },
         ];
       }
     }
@@ -213,8 +213,8 @@ export const getAllTouristPlacesAdmin = async (req: Request, res: Response) => {
       const searchTerm = (search as string).trim();
       if (searchTerm.length) {
         where.OR = [
-          { title: { contains: searchTerm, mode: 'insensitive' } },
-          { subtitle: { contains: searchTerm, mode: 'insensitive' } },
+          { title: { contains: searchTerm } },
+          { subtitle: { contains: searchTerm } },
         ];
       }
     }
@@ -355,8 +355,14 @@ export const createTouristPlace = async (req: AuthRequest, res: Response) => {
     
     isActive = isActive === 'true' || isActive === true;
 
-    if (!title || !slug || !cityId) {
-      return sendError(res, 400, 'Title, slug, and cityId are required');
+    // Validate required fields with specific error messages
+    const missingFields: string[] = [];
+    if (!title || title.trim() === '') missingFields.push('Title');
+    if (!slug || slug.trim() === '') missingFields.push('Slug');
+    if (!cityId || cityId.trim() === '') missingFields.push('City');
+
+    if (missingFields.length > 0) {
+      return sendError(res, 400, `Missing required fields: ${missingFields.join(', ')}`);
     }
 
     // Check if slug already exists
@@ -454,6 +460,18 @@ export const createTouristPlace = async (req: AuthRequest, res: Response) => {
 
     // Create attractions if provided
     if (attractions && Array.isArray(attractions) && attractions.length > 0) {
+      // Validate attractions
+      const invalidAttractions: string[] = [];
+      attractions.forEach((attraction: any, index: number) => {
+        if (!attraction.name || attraction.name.trim() === '') {
+          invalidAttractions.push(`Attraction ${index + 1} - Name is required`);
+        }
+      });
+
+      if (invalidAttractions.length > 0) {
+        return sendError(res, 400, `Invalid attractions:\n${invalidAttractions.join('\n')}`);
+      }
+
       // Map uploaded images to attractions (by index)
       let attractionImageIndex = 0;
       
@@ -598,6 +616,22 @@ export const updateTouristPlace = async (req: AuthRequest, res: Response) => {
       return sendError(res, 404, 'Tourist place not found');
     }
 
+    // Validate required fields if they are being updated
+    const missingFields: string[] = [];
+    if (title !== undefined && (!title || title.trim() === '')) {
+      missingFields.push('Title');
+    }
+    if (slug !== undefined && (!slug || slug.trim() === '')) {
+      missingFields.push('Slug');
+    }
+    if (cityId !== undefined && (!cityId || cityId.trim() === '')) {
+      missingFields.push('City');
+    }
+
+    if (missingFields.length > 0) {
+      return sendError(res, 400, `Missing required fields: ${missingFields.join(', ')}`);
+    }
+
     // Check if slug is being changed and if it already exists
     if (slug && slug !== existingPlace.slug) {
       const slugExists = await prismaClient.touristPlace.findUnique({
@@ -703,6 +737,20 @@ export const updateTouristPlace = async (req: AuthRequest, res: Response) => {
 
     // Handle attractions update
     if (attractions !== undefined) {
+      // Validate attractions if provided
+      if (Array.isArray(attractions) && attractions.length > 0) {
+        const invalidAttractions: string[] = [];
+        attractions.forEach((attraction: any, index: number) => {
+          if (!attraction.name || attraction.name.trim() === '') {
+            invalidAttractions.push(`Attraction ${index + 1} - Name is required`);
+          }
+        });
+
+        if (invalidAttractions.length > 0) {
+          return sendError(res, 400, `Invalid attractions:\n${invalidAttractions.join('\n')}`);
+        }
+      }
+
       // Delete existing attractions
       await prismaClient.touristPlaceAttraction.deleteMany({
         where: { touristPlaceId: id },
