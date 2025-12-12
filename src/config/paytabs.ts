@@ -30,6 +30,13 @@ if (process.env.PAYTABS_RETURN_URL) {
   }
 }
 
+// Validate FRONTEND_URL is set (important for redirects)
+if (!process.env.FRONTEND_URL) {
+  console.warn('⚠️  WARNING: FRONTEND_URL is not set in environment variables!');
+  console.warn('   Payment redirects may not work correctly.');
+  console.warn('   Set FRONTEND_URL to your frontend domain (e.g., https://mawjoodfrontend.vercel.app)');
+}
+
 export const paytabsConfig = {
   serverKey: process.env.PAYTABS_SERVER_KEY || '',
   profileId: process.env.PAYTABS_PROFILE_ID || '',

@@ -353,67 +353,99 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
 
 // PayTabs Return Handler (for redirecting user after payment)
 export const handlePayTabsReturn = async (req: Request, res: Response) => {
+  let tranRef: string | undefined;
+  let cartId: string | undefined;
+  let paymentStatus: 'COMPLETED' | 'FAILED' | 'PENDING' = 'PENDING';
+  
   try {
     // Log the incoming request for debugging
     console.log('PayTabs Return Handler - Method:', req.method);
     console.log('PayTabs Return Handler - Query:', req.query);
     console.log('PayTabs Return Handler - Body:', req.body);
-    console.log('PayTabs Return Handler - Headers:', req.headers);
 
     // PayTabs may send GET or POST to the return URL; accept both.
-    // PayTabs typically sends these as query parameters in GET requests
-    const tranRef =
+    // PayTabs sends data in POST body as form-urlencoded
+    tranRef =
       (req.query.tranRef as string) ||
       (req.query.tran_ref as string) ||
       (req.body?.tranRef as string) ||
       (req.body?.tran_ref as string);
-    const cartId =
+    cartId =
       (req.query.cartId as string) ||
       (req.query.cart_id as string) ||
       (req.body?.cartId as string) ||
       (req.body?.cart_id as string);
 
-    const frontendBase = process.env.FRONTEND_URL || 'http://localhost:3000';
+    // Get frontend URL - ensure it's set correctly
+    const frontendBase = process.env.FRONTEND_URL || 'https://mawjoodfrontend.vercel.app';
+    console.log('PayTabs Return Handler - Frontend URL:', frontendBase);
 
     if (!tranRef || !cartId) {
       console.error('PayTabs Return Handler - Missing parameters:', { tranRef, cartId });
       return res.redirect(`${frontendBase}/dashboard/payments/failed?error=invalid_params`);
     }
 
-    // Verify payment status server-to-server to avoid trusting query params
-    const verificationResult = await paytabsService.verifyPayment(tranRef);
-    const paymentStatus = paytabsService.parsePaymentStatus(
-      verificationResult.payment_result?.response_status
-    );
+    // PayTabs sends respStatus directly in the body (D=Declined, A=Approved, etc.)
+    // Use this first for faster response, then verify with API for security
+    const respStatus = req.body?.respStatus as string;
+    if (respStatus) {
+      paymentStatus = paytabsService.parsePaymentStatus(respStatus);
+      console.log('PayTabs Return Handler - Status from body:', { respStatus, paymentStatus });
+    }
 
+    // Find payment in database
     const payment = await prisma.payment.findUnique({
       where: { id: cartId },
     });
 
     if (!payment) {
+      console.error('PayTabs Return Handler - Payment not found:', cartId);
       return res.redirect(`${frontendBase}/dashboard/payments/failed?error=payment_not_found`);
     }
 
-    // Redirect based on payment status
+    // Verify payment status server-to-server for security (but don't fail if verification fails)
+    try {
+      const verificationResult = await paytabsService.verifyPayment(tranRef);
+      const verifiedStatus = paytabsService.parsePaymentStatus(
+        verificationResult.payment_result?.response_status
+      );
+      // Use verified status if available, otherwise use status from body
+      if (verifiedStatus) {
+        paymentStatus = verifiedStatus;
+        console.log('PayTabs Return Handler - Verified status:', paymentStatus);
+      }
+    } catch (verifyError) {
+      // Log verification error but continue with status from body
+      console.warn('PayTabs Return Handler - Verification failed, using status from body:', verifyError);
+    }
+
+    // Build redirect URL
+    let redirectUrl: string;
     if (paymentStatus === 'COMPLETED') {
-      return res.redirect(
-        `${frontendBase}/dashboard/payments/success?paymentId=${payment.id}&tranRef=${tranRef}`
-      );
+      redirectUrl = `${frontendBase}/dashboard/payments/success?paymentId=${payment.id}&tranRef=${tranRef}`;
+    } else if (paymentStatus === 'FAILED') {
+      redirectUrl = `${frontendBase}/dashboard/payments/failed?paymentId=${payment.id}&tranRef=${tranRef}`;
+    } else {
+      redirectUrl = `${frontendBase}/dashboard/payments/pending?paymentId=${payment.id}&tranRef=${tranRef}`;
     }
 
-    if (paymentStatus === 'FAILED') {
-      return res.redirect(
-        `${frontendBase}/dashboard/payments/failed?paymentId=${payment.id}&tranRef=${tranRef}`
-      );
-    }
-
-    return res.redirect(
-      `${frontendBase}/dashboard/payments/pending?paymentId=${payment.id}&tranRef=${tranRef}`
-    );
+    console.log('PayTabs Return Handler - Redirecting to:', redirectUrl);
+    return res.redirect(redirectUrl);
   } catch (error) {
     console.error('PayTabs return error:', error);
-    const frontendBase = process.env.FRONTEND_URL || 'http://localhost:3000';
-    return res.redirect(`${frontendBase}/dashboard/payments/failed?error=processing_error`);
+    const frontendBase = process.env.FRONTEND_URL || 'https://mawjoodfrontend.vercel.app';
+    
+    // Build error redirect URL with available parameters
+    let errorUrl = `${frontendBase}/dashboard/payments/failed?error=processing_error`;
+    if (tranRef) {
+      errorUrl += `&tranRef=${tranRef}`;
+    }
+    if (cartId) {
+      errorUrl += `&paymentId=${cartId}`;
+    }
+    
+    console.log('PayTabs Return Handler - Error redirect to:', errorUrl);
+    return res.redirect(errorUrl);
   }
 };
 
