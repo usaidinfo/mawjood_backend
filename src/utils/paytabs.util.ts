@@ -97,6 +97,17 @@ export class PayTabsService {
     returnUrl?: string
   ): Promise<PayTabsPaymentResponse> {
     try {
+      // Validate server key format (Web/Server keys should not be Mobile keys)
+      if (!this.serverKey || this.serverKey.trim() === '') {
+        throw new Error('PayTabs server key is not configured. Please set PAYTABS_SERVER_KEY in your environment variables.');
+      }
+
+      // Check if using a Mobile key (common cause of application/octet-stream error)
+      // Mobile keys typically have different prefixes, but this is a heuristic check
+      if (this.serverKey.includes('mobile') || this.serverKey.toLowerCase().includes('mobile')) {
+        console.warn('Warning: PayTabs server key may be a Mobile key. Web integrations require a Server/Web key.');
+      }
+
       const payload: PayTabsPaymentRequest = {
         profile_id: this.profileId,
         tran_type: 'sale',
@@ -139,6 +150,11 @@ export class PayTabsService {
         errorMessage = error.response.data.error;
       } else if (error.message) {
         errorMessage = error.message;
+      }
+
+      // Provide helpful error message for the application/octet-stream error
+      if (errorMessage.includes('application/octet-stream')) {
+        errorMessage = 'PayTabs authentication error: You are using a Mobile authentication key for a Web integration. Please ensure you are using a Server/Web authentication key in your PAYTABS_SERVER_KEY environment variable. Check your PayTabs merchant dashboard to generate the correct key type.';
       }
       
       throw new Error(errorMessage);

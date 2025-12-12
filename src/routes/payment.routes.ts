@@ -14,9 +14,12 @@ import { authenticate, authorize } from '../middleware/auth.middleware';
 const router = Router();
 
 // PayTabs callback/webhook routes (no auth - verified by PayTabs API)
+// IMPORTANT: These routes must be defined BEFORE other routes to avoid conflicts
 router.post('/paytabs/callback', handlePayTabsCallback);
 // Accept both GET and POST for return URL to avoid 405 from PayTabs
-router.all('/paytabs/return', handlePayTabsReturn);
+// PayTabs typically redirects with GET, but we support both for compatibility
+router.get('/paytabs/return', handlePayTabsReturn);
+router.post('/paytabs/return', handlePayTabsReturn);
 
 // Protected routes
 router.get('/my-payments', authenticate, getUserPayments);

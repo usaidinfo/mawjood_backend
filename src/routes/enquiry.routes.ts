@@ -5,6 +5,7 @@ import {
   getEnquiryById,
   updateEnquiryStatus,
   getUserEnquiries,
+  getAllEnquiries,
 } from '../controllers/enquiry.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 
@@ -18,6 +19,9 @@ router.get('/my-enquiries', authenticate, getUserEnquiries);
 
 // Business owner routes - Get business enquiries
 router.get('/business', authenticate, getBusinessEnquiries);
+
+// Admin routes - Get all enquiries
+router.get('/admin/all', authenticate, authorize('ADMIN'), getAllEnquiries);
 
 // Get single enquiry
 router.get('/:id', authenticate, getEnquiryById);

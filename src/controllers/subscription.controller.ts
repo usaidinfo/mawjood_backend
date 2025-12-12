@@ -574,6 +574,54 @@ export const assignSponsorSubscription = async (req: AuthRequest, res: Response)
       return sendError(res, 404, 'Business not found');
     }
 
+    // Check if business already has an active sponsor subscription
+    // First, check by plan.isSponsorPlan
+    let existingActiveSponsorSubscription = await prismaClient.businessSubscription.findFirst({
+      where: {
+        businessId,
+        status: 'ACTIVE',
+        endsAt: {
+          gt: new Date(), // Not expired yet
+        },
+        plan: {
+          isSponsorPlan: true,
+        },
+      },
+      include: {
+        plan: true,
+      },
+    });
+
+    // If not found, check by metadata.isSponsorSubscription
+    if (!existingActiveSponsorSubscription) {
+      const allActiveSubscriptions = await prismaClient.businessSubscription.findMany({
+        where: {
+          businessId,
+          status: 'ACTIVE',
+          endsAt: {
+            gt: new Date(),
+          },
+        },
+        include: {
+          plan: true,
+        },
+      });
+
+      // Check metadata for sponsor subscription
+      existingActiveSponsorSubscription = allActiveSubscriptions.find((sub: any) => {
+        const metadata = sub.metadata as any;
+        return metadata?.isSponsorSubscription === true;
+      }) || null;
+    }
+
+    if (existingActiveSponsorSubscription) {
+      return sendError(
+        res,
+        400,
+        `This business already has an active sponsor subscription that expires on ${new Date(existingActiveSponsorSubscription.endsAt).toLocaleDateString()}. Please wait until it expires before assigning a new one.`
+      );
+    }
+
     // Find or create default sponsor plan
     let plan;
     if (planId) {

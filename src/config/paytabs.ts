@@ -18,6 +18,18 @@ const defaultReturnUrl =
   process.env.PAYTABS_RETURN_URL ||
   `${backendBaseUrl}/api/payments/paytabs/return`;
 
+// Validate return URL points to backend, not frontend
+if (process.env.PAYTABS_RETURN_URL) {
+  const returnUrl = process.env.PAYTABS_RETURN_URL;
+  // Check if it's pointing to frontend (common mistake)
+  if (returnUrl.includes('/dashboard/') || returnUrl.includes(':3000') && !returnUrl.includes('/api/')) {
+    console.warn('⚠️  WARNING: PAYTABS_RETURN_URL appears to point to frontend instead of backend!');
+    console.warn(`   Current: ${returnUrl}`);
+    console.warn(`   Should be: ${backendBaseUrl}/api/payments/paytabs/return`);
+    console.warn('   This will cause 405 errors when PayTabs redirects after payment.');
+  }
+}
+
 export const paytabsConfig = {
   serverKey: process.env.PAYTABS_SERVER_KEY || '',
   profileId: process.env.PAYTABS_PROFILE_ID || '',

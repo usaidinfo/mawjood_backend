@@ -481,6 +481,111 @@ export const updateEnquiryStatus = async (req: AuthRequest, res: Response) => {
 };
 
 /**
+ * Get all enquiries (Admin only)
+ */
+export const getAllEnquiries = async (req: AuthRequest, res: Response) => {
+  try {
+    const userRole = req.user?.role;
+
+    if (userRole !== 'ADMIN') {
+      return sendError(res, 403, 'Forbidden. Only admins can view all enquiries.');
+    }
+
+    const {
+      page = '1',
+      limit = '20',
+      status,
+      search,
+      categoryId,
+      startDate,
+      endDate,
+    } = req.query;
+
+    // Build where clause
+    const where: any = {};
+
+    if (status && typeof status === 'string') {
+      where.status = status;
+    }
+
+    if (search && typeof search === 'string') {
+      where.OR = [
+        { name: { contains: search } },
+        { email: { contains: search } },
+        { phone: { contains: search } },
+        { message: { contains: search } },
+        { business: { name: { contains: search } } },
+      ];
+    }
+
+    if (categoryId && typeof categoryId === 'string') {
+      where.business = {
+        categoryId,
+      };
+    }
+
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) {
+        where.createdAt.gte = new Date(startDate as string);
+      }
+      if (endDate) {
+        where.createdAt.lte = new Date(endDate as string);
+      }
+    }
+
+    const [enquiries, total] = await Promise.all([
+      prismaClient.enquiry.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+          business: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              email: true,
+              phone: true,
+              category: {
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: parseInt(limit as string),
+        skip: (parseInt(page as string) - 1) * parseInt(limit as string),
+      }),
+      prismaClient.enquiry.count({ where }),
+    ]);
+
+    return sendSuccess(res, 200, 'Enquiries fetched successfully', {
+      enquiries,
+      pagination: {
+        page: parseInt(page as string),
+        limit: parseInt(limit as string),
+        total,
+        pages: Math.ceil(total / parseInt(limit as string)),
+      },
+    });
+  } catch (error: any) {
+    console.error('Get all enquiries error:', error);
+    return sendError(res, 500, 'Failed to fetch enquiries', error);
+  }
+};
+
+/**
  * Get user's own enquiries
  */
 export const getUserEnquiries = async (req: AuthRequest, res: Response) => {

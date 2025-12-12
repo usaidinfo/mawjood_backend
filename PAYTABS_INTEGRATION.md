@@ -218,6 +218,16 @@ The callback handler verifies payments by:
   - Test keys start with `SN` and `CV`
   - Production keys start with `SB` and `CG`
 
+#### 5. "Request must be type application/octet-stream" error
+- **Cause:** Using a Mobile authentication key for a Web integration
+- **Solution:** 
+  - This error occurs when `PAYTABS_SERVER_KEY` contains a Mobile key instead of a Server/Web key
+  - Verify your key type in the PayTabs merchant dashboard
+  - Generate a new Server/Web authentication key if needed
+  - Ensure your localhost `.env` file uses the correct Server/Web key (not Mobile key)
+  - Test keys for Web integration should start with `SN` (test) or `SB` (production)
+  - If it works in production but not localhost, check that your localhost environment uses the same key type as production
+
 ## Monitoring
 
 ### Important Logs

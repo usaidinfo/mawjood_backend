@@ -354,7 +354,14 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
 // PayTabs Return Handler (for redirecting user after payment)
 export const handlePayTabsReturn = async (req: Request, res: Response) => {
   try {
+    // Log the incoming request for debugging
+    console.log('PayTabs Return Handler - Method:', req.method);
+    console.log('PayTabs Return Handler - Query:', req.query);
+    console.log('PayTabs Return Handler - Body:', req.body);
+    console.log('PayTabs Return Handler - Headers:', req.headers);
+
     // PayTabs may send GET or POST to the return URL; accept both.
+    // PayTabs typically sends these as query parameters in GET requests
     const tranRef =
       (req.query.tranRef as string) ||
       (req.query.tran_ref as string) ||
@@ -369,6 +376,7 @@ export const handlePayTabsReturn = async (req: Request, res: Response) => {
     const frontendBase = process.env.FRONTEND_URL || 'http://localhost:3000';
 
     if (!tranRef || !cartId) {
+      console.error('PayTabs Return Handler - Missing parameters:', { tranRef, cartId });
       return res.redirect(`${frontendBase}/dashboard/payments/failed?error=invalid_params`);
     }
 
