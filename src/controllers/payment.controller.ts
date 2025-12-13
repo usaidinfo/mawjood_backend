@@ -404,15 +404,17 @@ export const handlePayTabsReturn = async (req: Request, res: Response) => {
       (req.body?.cartId as string) ||
       (req.body?.cart_id as string);
 
+    // Get backend base URL dynamically from request or environment
+    // Use request host to build URL dynamically (works in both localhost and production)
+    const protocol = req.protocol || (req.headers['x-forwarded-proto'] as string)?.split(',')[0] || 'https';
+    const host = req.get('host') || process.env.BACKEND_URL?.replace(/^https?:\/\//, '') || 'localhost:5000';
+    const backendBase = process.env.BACKEND_URL || process.env.API_BASE_URL || `${protocol}://${host}`;
+
     if (!tranRef || !cartId) {
       console.error('PayTabs Return Handler - Missing parameters:', { tranRef, cartId });
       // Redirect to intermediate endpoint which will handle error redirect
-      const backendBase = process.env.BACKEND_URL || process.env.API_BASE_URL || 'http://localhost:5000';
       return res.redirect(303, `${backendBase}/api/payments/paytabs/redirect?error=invalid_params`);
     }
-
-    // Get backend base URL for intermediate redirect
-    const backendBase = process.env.BACKEND_URL || process.env.API_BASE_URL || 'http://localhost:5000';
     
     // CRITICAL: Two-step redirect to avoid cross-origin POST redirect issues
     // Step 1: Redirect to our own backend GET endpoint (same origin)
@@ -432,8 +434,12 @@ export const handlePayTabsReturn = async (req: Request, res: Response) => {
     console.error('PayTabs return error:', error);
     console.error('PayTabs return error stack:', error?.stack);
     
+    // Get backend base URL dynamically from request or environment
+    const protocol = req.protocol || (req.headers['x-forwarded-proto'] as string)?.split(',')[0] || 'https';
+    const host = req.get('host') || process.env.BACKEND_URL?.replace(/^https?:\/\//, '') || 'localhost:5000';
+    const backendBase = process.env.BACKEND_URL || process.env.API_BASE_URL || `${protocol}://${host}`;
+    
     // Redirect to intermediate endpoint which will handle error redirect
-    const backendBase = process.env.BACKEND_URL || process.env.API_BASE_URL || 'http://localhost:5000';
     let errorUrl = `${backendBase}/api/payments/paytabs/redirect?error=processing_error`;
     if (tranRef) {
       errorUrl += `&tranRef=${tranRef}`;
