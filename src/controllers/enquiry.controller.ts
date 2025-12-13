@@ -412,9 +412,13 @@ export const updateEnquiryStatus = async (req: AuthRequest, res: Response) => {
     });
 
     // Send email notification to user if response is provided
-    if (response && updatedEnquiry.user) {
+    if (response && updatedEnquiry.user && updatedEnquiry.business) {
       try {
-        const businessUrl = `${process.env.FRONTEND_URL || 'https://mawjood.com'}/business/${enquiry.business.slug}`;
+        const businessName = updatedEnquiry.business.name || 'the business';
+        const businessSlug = updatedEnquiry.business.slug || '';
+        const businessUrl = businessSlug 
+          ? `${process.env.FRONTEND_URL || 'https://mawjood.com'}/business/${businessSlug}`
+          : `${process.env.FRONTEND_URL || 'https://mawjood.com'}/businesses`;
         
         const html = `
           <!DOCTYPE html>
@@ -429,8 +433,8 @@ export const updateEnquiryStatus = async (req: AuthRequest, res: Response) => {
                 <h1 style="color: white; margin: 0;">Response to Your Enquiry</h1>
               </div>
               <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
-                <h2 style="color: #1c4233; margin-top: 0;">Hello ${enquiry.user.firstName},</h2>
-                <p>You have received a response to your enquiry for <strong>${enquiry.business.name}</strong>.</p>
+                <h2 style="color: #1c4233; margin-top: 0;">Hello ${updatedEnquiry.user.firstName || 'there'},</h2>
+                <p>You have received a response to your enquiry for <strong>${businessName}</strong>.</p>
                 
                 <div style="background: white; padding: 20px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #1c4233;">
                   <h3 style="color: #1c4233; margin-top: 0;">Response:</h3>
@@ -452,19 +456,19 @@ export const updateEnquiryStatus = async (req: AuthRequest, res: Response) => {
         `;
 
         await emailService.sendEmail({
-          to: enquiry.user.email,
-          subject: `Response to Your Enquiry - ${enquiry.business.name}`,
+          to: updatedEnquiry.user.email,
+          subject: `Response to Your Enquiry - ${businessName}`,
           html,
         });
 
         // Create notification for user
         await prismaClient.notification.create({
           data: {
-            userId: enquiry.userId,
+            userId: updatedEnquiry.userId,
             type: 'ENQUIRY_RESPONSE',
             title: 'Response to Your Enquiry',
-            message: `You have received a response from ${enquiry.business.name}`,
-            link: `/dashboard/enquiries?enquiryId=${id}`,
+            message: `You have received a response from ${businessName}`,
+            link: `/profile?tab=enquiries`,
           },
         });
       } catch (emailError) {

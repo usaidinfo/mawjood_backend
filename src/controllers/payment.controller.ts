@@ -36,6 +36,8 @@ export const getBusinessPayments = async (req: AuthRequest, res: Response) => {
     const { businessId } = req.params;
     const userId = req.user?.userId;
     const userRole = req.user?.role;
+    const { page = '1', limit = '20' } = req.query;
+    const skip = (parseInt(page as string, 10) - 1) * parseInt(limit as string, 10);
 
     // Check if user owns the business or is admin
     const business = await prisma.business.findUnique({
@@ -50,22 +52,35 @@ export const getBusinessPayments = async (req: AuthRequest, res: Response) => {
       return sendError(res, 403, 'You are not authorized to view these payments');
     }
 
-    const payments = await prisma.payment.findMany({
-      where: { businessId },
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
+    const [payments, total] = await Promise.all([
+      prisma.payment.findMany({
+        where: { businessId },
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: parseInt(limit as string, 10),
+      }),
+      prisma.payment.count({ where: { businessId } }),
+    ]);
 
-    return sendSuccess(res, 200, 'Business payments fetched successfully', payments);
+    return sendSuccess(res, 200, 'Business payments fetched successfully', {
+      payments,
+      pagination: {
+        page: parseInt(page as string, 10),
+        limit: parseInt(limit as string, 10),
+        total,
+        pages: Math.ceil(total / parseInt(limit as string, 10)),
+      },
+    });
   } catch (error) {
     console.error('Get business payments error:', error);
     return sendError(res, 500, 'Failed to fetch business payments', error);
