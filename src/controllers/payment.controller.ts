@@ -157,11 +157,11 @@ export const createPayment = async (req: AuthRequest, res: Response) => {
           name: `${user.firstName} ${user.lastName}`.trim() || user.email,
           email: user.email,
           phone: user.phone || '966500000000',
-          street1: 'N/A',
-          city: 'N/A',
-          state: 'N/A',
+          street1: 'Riyadh',
+          city: 'Riyadh',
+          state: 'Riyadh',
           country: 'SA',
-          zip: '00000',
+          zip: '11564',
         },
         paytabsConfig.callbackUrl,
         paytabsConfig.returnUrl // enforce backend return URL to avoid misconfiguration/405s
@@ -254,6 +254,17 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
     if (!payment) {
       console.error(`Payment not found for cart_id: ${cart_id}`);
       return sendError(res, 404, 'Payment not found');
+    }
+
+    // IDEMPOTENCY CHECK: If payment is already COMPLETED, skip processing
+    // PayTabs can and will retry callbacks, so we must guard against duplicate processing
+    if (payment.status === 'COMPLETED') {
+      console.log(`Payment ${payment.id} already processed (status: COMPLETED). Skipping duplicate callback.`);
+      return sendSuccess(res, 200, 'Payment already processed', {
+        paymentId: payment.id,
+        status: payment.status,
+        transactionRef: payment.transactionId || tran_ref,
+      });
     }
 
     // Update payment record
@@ -367,10 +378,12 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
 };
 
 // PayTabs Return Handler (for redirecting user after payment)
+// IMPORTANT: This handler should NEVER update payment state.
+// It only reads from DB and redirects to an intermediate GET endpoint.
+// The callback handler is responsible for updating payment status.
 export const handlePayTabsReturn = async (req: Request, res: Response) => {
   let tranRef: string | undefined;
   let cartId: string | undefined;
-  let paymentStatus: 'COMPLETED' | 'FAILED' | 'PENDING' = 'PENDING';
   
   try {
     // Log the incoming request for debugging
@@ -391,77 +404,37 @@ export const handlePayTabsReturn = async (req: Request, res: Response) => {
       (req.body?.cartId as string) ||
       (req.body?.cart_id as string);
 
-    // Get frontend URL - ensure it's set correctly
-    const frontendBase = process.env.FRONTEND_URL || 'https://mawjoodfrontend.vercel.app';
-    console.log('PayTabs Return Handler - Frontend URL:', frontendBase);
-
     if (!tranRef || !cartId) {
       console.error('PayTabs Return Handler - Missing parameters:', { tranRef, cartId });
-      return res.redirect(`${frontendBase}/dashboard/payments/failed?error=invalid_params`);
+      // Redirect to intermediate endpoint which will handle error redirect
+      const backendBase = process.env.BACKEND_URL || process.env.API_BASE_URL || 'http://localhost:5000';
+      return res.redirect(303, `${backendBase}/api/payments/paytabs/redirect?error=invalid_params`);
     }
 
-    // PayTabs sends respStatus directly in the body (D=Declined, A=Approved, etc.)
-    // Use this first for faster response, then verify with API for security
-    const respStatus = req.body?.respStatus as string;
-    if (respStatus) {
-      paymentStatus = paytabsService.parsePaymentStatus(respStatus);
-      console.log('PayTabs Return Handler - Status from body:', { respStatus, paymentStatus });
-    }
-
-    // Find payment in database
-    const payment = await prisma.payment.findUnique({
-      where: { id: cartId },
-    });
-
-    if (!payment) {
-      console.error('PayTabs Return Handler - Payment not found:', cartId);
-      return res.redirect(`${frontendBase}/dashboard/payments/failed?error=payment_not_found`);
-    }
-
-    // Verify payment status server-to-server for security (but don't fail if verification fails)
-    try {
-      console.log('PayTabs Return Handler - Verifying payment with PayTabs API...');
-      const verificationResult = await paytabsService.verifyPayment(tranRef);
-      const verifiedStatus = paytabsService.parsePaymentStatus(
-        verificationResult.payment_result?.response_status
-      );
-      if (verifiedStatus) {
-        paymentStatus = verifiedStatus;
-        console.log('PayTabs Return Handler - Verified status:', paymentStatus);
-      } else {
-        console.log('PayTabs Return Handler - No verified status, using status from body');
-      }
-    } catch (verifyError: any) {
-      console.warn('PayTabs Return Handler - Verification failed, using status from body');
-      console.warn('PayTabs Return Handler - Verification error:', verifyError?.message || verifyError);
-    }
-
-    // Build redirect URL
-    let redirectUrl: string;
-    if (paymentStatus === 'COMPLETED') {
-      redirectUrl = `${frontendBase}/dashboard/payments/success?paymentId=${payment.id}&tranRef=${tranRef}`;
-    } else if (paymentStatus === 'FAILED') {
-      redirectUrl = `${frontendBase}/dashboard/payments/failed?paymentId=${payment.id}&tranRef=${tranRef}`;
-    } else {
-      redirectUrl = `${frontendBase}/dashboard/payments/pending?paymentId=${payment.id}&tranRef=${tranRef}`;
-    }
-
-    console.log('PayTabs Return Handler - Redirecting to:', redirectUrl);
+    // Get backend base URL for intermediate redirect
+    const backendBase = process.env.BACKEND_URL || process.env.API_BASE_URL || 'http://localhost:5000';
+    
+    // CRITICAL: Two-step redirect to avoid cross-origin POST redirect issues
+    // Step 1: Redirect to our own backend GET endpoint (same origin)
+    // Step 2: That GET endpoint will redirect to frontend
+    const intermediateUrl = `${backendBase}/api/payments/paytabs/redirect?paymentId=${cartId}&tranRef=${tranRef}`;
+    
+    console.log('PayTabs Return Handler - Redirecting to intermediate endpoint:', intermediateUrl);
     
     // For POST requests, use 303 See Other status code to ensure browser follows redirect
     // For GET requests, use standard 302 redirect
     if (req.method === 'POST') {
-      return res.redirect(303, redirectUrl);
+      return res.redirect(303, intermediateUrl);
     } else {
-      return res.redirect(302, redirectUrl);
+      return res.redirect(302, intermediateUrl);
     }
   } catch (error: any) {
     console.error('PayTabs return error:', error);
     console.error('PayTabs return error stack:', error?.stack);
-    const frontendBase = process.env.FRONTEND_URL || 'https://mawjoodfrontend.vercel.app';
     
-    // Build error redirect URL with available parameters
-    let errorUrl = `${frontendBase}/dashboard/payments/failed?error=processing_error`;
+    // Redirect to intermediate endpoint which will handle error redirect
+    const backendBase = process.env.BACKEND_URL || process.env.API_BASE_URL || 'http://localhost:5000';
+    let errorUrl = `${backendBase}/api/payments/paytabs/redirect?error=processing_error`;
     if (tranRef) {
       errorUrl += `&tranRef=${tranRef}`;
     }
@@ -469,7 +442,7 @@ export const handlePayTabsReturn = async (req: Request, res: Response) => {
       errorUrl += `&paymentId=${cartId}`;
     }
     
-    console.log('PayTabs Return Handler - Error redirect to:', errorUrl);
+    console.log('PayTabs Return Handler - Error redirect to intermediate:', errorUrl);
     
     // Use 303 for POST requests, 302 for GET
     if (req.method === 'POST') {
@@ -477,6 +450,64 @@ export const handlePayTabsReturn = async (req: Request, res: Response) => {
     } else {
       return res.redirect(302, errorUrl);
     }
+  }
+};
+
+// PayTabs Redirect Handler (GET endpoint for two-step redirect)
+// This endpoint reads payment status from DB and redirects to frontend.
+// This solves cross-origin POST redirect issues by using GET redirect.
+export const handlePayTabsRedirect = async (req: Request, res: Response) => {
+  try {
+    const { paymentId, tranRef, error } = req.query;
+    const frontendBase = process.env.FRONTEND_URL || 'https://mawjoodfrontend.vercel.app';
+
+    // Handle error cases
+    if (error) {
+      console.log('PayTabs Redirect Handler - Error parameter:', error);
+      let errorUrl = `${frontendBase}/dashboard/payments/failed?error=${error}`;
+      if (tranRef) {
+        errorUrl += `&tranRef=${tranRef}`;
+      }
+      if (paymentId) {
+        errorUrl += `&paymentId=${paymentId}`;
+      }
+      return res.redirect(302, errorUrl);
+    }
+
+    if (!paymentId) {
+      console.error('PayTabs Redirect Handler - Missing paymentId');
+      return res.redirect(302, `${frontendBase}/dashboard/payments/failed?error=missing_payment_id`);
+    }
+
+    // Read payment status from database (DO NOT UPDATE)
+    // The callback handler is responsible for updating payment status
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId as string },
+    });
+
+    if (!payment) {
+      console.error('PayTabs Redirect Handler - Payment not found:', paymentId);
+      return res.redirect(302, `${frontendBase}/dashboard/payments/failed?error=payment_not_found&paymentId=${paymentId}`);
+    }
+
+    // Use payment status from database to determine redirect
+    // This ensures we use the status set by the callback handler
+    let redirectUrl: string;
+    if (payment.status === 'COMPLETED') {
+      redirectUrl = `${frontendBase}/dashboard/payments/success?paymentId=${paymentId}&tranRef=${tranRef || payment.transactionId || ''}`;
+    } else if (payment.status === 'FAILED') {
+      redirectUrl = `${frontendBase}/dashboard/payments/failed?paymentId=${paymentId}&tranRef=${tranRef || payment.transactionId || ''}`;
+    } else {
+      // PENDING or any other status
+      redirectUrl = `${frontendBase}/dashboard/payments/pending?paymentId=${paymentId}&tranRef=${tranRef || payment.transactionId || ''}`;
+    }
+
+    console.log('PayTabs Redirect Handler - Redirecting to frontend:', redirectUrl);
+    return res.redirect(302, redirectUrl);
+  } catch (error: any) {
+    console.error('PayTabs redirect error:', error);
+    const frontendBase = process.env.FRONTEND_URL || 'https://mawjoodfrontend.vercel.app';
+    return res.redirect(302, `${frontendBase}/dashboard/payments/failed?error=redirect_error`);
   }
 };
 
