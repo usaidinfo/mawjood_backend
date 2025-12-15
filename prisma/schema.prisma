@@ -69,6 +69,7 @@ enum AdvertisementType {
   BUSINESS_LISTING
   BLOG_LISTING
   HOMEPAGE
+  HERO_STRIP
 }
 
 enum EnquiryStatus {

@@ -118,7 +118,7 @@ export const createAdvertisement = async (req: Request, res: Response) => {
       return sendError(res, 400, 'Advertisement image is required');
     }
 
-    const validAdTypes = ['CATEGORY', 'TOP', 'FOOTER', 'BUSINESS_LISTING', 'BLOG_LISTING', 'HOMEPAGE'];
+    const validAdTypes = ['CATEGORY', 'TOP', 'FOOTER', 'BUSINESS_LISTING', 'BLOG_LISTING', 'HOMEPAGE', 'HERO_STRIP'];
     if (!adType || !validAdTypes.includes(adType)) {
       return sendError(res, 400, `Ad type is required and must be one of: ${validAdTypes.join(', ')}`);
     }
@@ -192,7 +192,7 @@ export const updateAdvertisement = async (req: Request, res: Response) => {
       updateData.openInNewTab = parseBoolean(openInNewTab);
     }
 
-    const validAdTypes = ['CATEGORY', 'TOP', 'FOOTER', 'BUSINESS_LISTING', 'BLOG_LISTING', 'HOMEPAGE'];
+    const validAdTypes = ['CATEGORY', 'TOP', 'FOOTER', 'BUSINESS_LISTING', 'BLOG_LISTING', 'HOMEPAGE', 'HERO_STRIP'];
     if (adType && validAdTypes.includes(adType)) {
       updateData.adType = adType;
     }
@@ -393,7 +393,7 @@ export const getAdvertisementForDisplay = async (req: Request, res: Response) =>
   try {
     const { locationId, locationType, categoryId, adType } = req.query;
 
-    const validAdTypes = ['CATEGORY', 'TOP', 'FOOTER', 'BUSINESS_LISTING', 'BLOG_LISTING', 'HOMEPAGE'];
+    const validAdTypes = ['CATEGORY', 'TOP', 'FOOTER', 'BUSINESS_LISTING', 'BLOG_LISTING', 'HOMEPAGE', 'HERO_STRIP'];
     if (!adType || !validAdTypes.includes(adType as string)) {
       return sendError(res, 400, `Ad type is required and must be one of: ${validAdTypes.join(', ')}`);
     }

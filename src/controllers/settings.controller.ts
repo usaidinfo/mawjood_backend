@@ -9,6 +9,7 @@ const DEFAULT_SITE_SETTINGS = {
   hero: {
     title: 'Discover & Connect Locally',
     subtitle: 'Find trusted businesses, services, and experiences across Saudi Arabia.',
+    carousel: [],
     cards: [
       {
         id: 'transporters',
