@@ -27,9 +27,12 @@ export const createEnquiry = async (req: AuthRequest, res: Response) => {
 
     const { businessId, name, phone, email, message } = req.body;
 
-    if (!businessId || !name || !phone || !email || !message) {
-      return sendError(res, 400, 'All fields are required');
+    if (!businessId || !name || !phone || !email) {
+      return sendError(res, 400, 'Business ID, name, phone, and email are required');
     }
+
+    // Convert empty string to null for optional message field
+    const messageValue = message && message.trim() ? message.trim() : null;
 
     // Validate business exists
     const business = await prismaClient.business.findUnique({
@@ -56,7 +59,7 @@ export const createEnquiry = async (req: AuthRequest, res: Response) => {
         name,
         phone,
         email,
-        message,
+        message: messageValue,
         userId,
         businessId,
         status: EnquiryStatus.OPEN,
@@ -112,10 +115,12 @@ export const createEnquiry = async (req: AuthRequest, res: Response) => {
                 <p style="margin: 10px 0;"><strong>Business:</strong> ${business.name}</p>
               </div>
               
+              ${messageValue ? `
               <div style="background: white; padding: 20px; margin: 20px 0; border-radius: 5px;">
                 <h3 style="color: #1c4233; margin-top: 0;">Message:</h3>
-                <p style="white-space: pre-wrap; margin: 0;">${message}</p>
+                <p style="white-space: pre-wrap; margin: 0;">${messageValue}</p>
               </div>
+              ` : ''}
               
               <div style="text-align: center; margin: 30px 0;">
                 <a href="${enquiryUrl}" 

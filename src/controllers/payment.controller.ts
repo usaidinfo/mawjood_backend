@@ -247,7 +247,21 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
     const payment = await prisma.payment.findUnique({
       where: { id: cart_id },
       include: {
-        business: true,
+        business: {
+          select: {
+            id: true,
+            name: true,
+            userId: true,
+          },
+        },
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
       },
     });
 
@@ -271,6 +285,34 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
         transactionId: tran_ref,
       },
     });
+
+    // Create notification based on payment status
+    try {
+      if (paymentStatus === 'COMPLETED') {
+        await prisma.notification.create({
+          data: {
+            userId: payment.userId,
+            type: 'PAYMENT_SUCCESS',
+            title: 'Payment Successful! ✅',
+            message: `Your payment of ${payment.amount} ${payment.currency} for "${payment.business?.name || 'business'}" has been completed successfully. Transaction ID: ${tran_ref}`,
+            link: `/dashboard/payments?paymentId=${payment.id}`,
+          },
+        });
+      } else if (paymentStatus === 'FAILED') {
+        await prisma.notification.create({
+          data: {
+            userId: payment.userId,
+            type: 'PAYMENT_FAILED',
+            title: 'Payment Failed ❌',
+            message: `Your payment of ${payment.amount} ${payment.currency} for "${payment.business?.name || 'business'}" has failed. Please try again or contact support if the issue persists.`,
+            link: `/dashboard/payments?paymentId=${payment.id}`,
+          },
+        });
+      }
+    } catch (notificationError) {
+      // Don't fail the payment processing if notification creation fails
+      console.error('Failed to create payment notification:', notificationError);
+    }
 
     // IMPORTANT: Only activate subscription if payment is COMPLETED
     // This is the ONLY place where subscriptions should be activated
@@ -463,6 +505,31 @@ export const updatePaymentStatus = async (req: Request, res: Response) => {
       return sendError(res, 400, 'Status is required');
     }
 
+    // Get payment with user and business info before updating
+    const existingPayment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: {
+        business: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        user: {
+          select: {
+            id: true,
+          },
+        },
+      },
+    });
+
+    if (!existingPayment) {
+      return sendError(res, 404, 'Payment not found');
+    }
+
+    // Only create notification if status is actually changing
+    const statusChanged = existingPayment.status !== status;
+
     const payment = await prisma.payment.update({
       where: { id: paymentId },
       data: {
@@ -470,6 +537,36 @@ export const updatePaymentStatus = async (req: Request, res: Response) => {
         transactionId,
       },
     });
+
+    // Create notification if status changed to COMPLETED or FAILED
+    if (statusChanged) {
+      try {
+        if (status === 'COMPLETED') {
+          await prisma.notification.create({
+            data: {
+              userId: existingPayment.userId,
+              type: 'PAYMENT_SUCCESS',
+              title: 'Payment Successful! ✅',
+              message: `Your payment of ${existingPayment.amount} ${existingPayment.currency} for "${existingPayment.business?.name || 'business'}" has been completed successfully.${transactionId ? ` Transaction ID: ${transactionId}` : ''}`,
+              link: `/dashboard/payments?paymentId=${paymentId}`,
+            },
+          });
+        } else if (status === 'FAILED') {
+          await prisma.notification.create({
+            data: {
+              userId: existingPayment.userId,
+              type: 'PAYMENT_FAILED',
+              title: 'Payment Failed ❌',
+              message: `Your payment of ${existingPayment.amount} ${existingPayment.currency} for "${existingPayment.business?.name || 'business'}" has failed. Please try again or contact support if the issue persists.`,
+              link: `/dashboard/payments?paymentId=${paymentId}`,
+            },
+          });
+        }
+      } catch (notificationError) {
+        // Don't fail the payment update if notification creation fails
+        console.error('Failed to create payment notification:', notificationError);
+      }
+    }
 
     return sendSuccess(res, 200, 'Payment status updated successfully', payment);
   } catch (error) {

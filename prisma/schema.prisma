@@ -584,7 +584,7 @@ model Enquiry {
   name          String
   phone         String
   email         String
-  message       String        @db.Text
+  message       String?       @db.Text
   status        EnquiryStatus @default(OPEN)
   response      String?       @db.Text
   responseDate  DateTime?
