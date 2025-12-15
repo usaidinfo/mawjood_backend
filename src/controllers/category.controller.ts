@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import prisma from '../config/database';
+import prisma, { withConnectionRetry } from '../config/database';
 import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest } from '../types';
 import { uploadToCloudinary } from '../config/cloudinary';
@@ -94,29 +94,31 @@ export const getCategoryBySlug = async (req: Request, res: Response) => {
   try {
     const { slug } = req.params;
 
-    const category = await prisma.category.findUnique({
-      where: { slug },
-      include: {
-        subcategories: {
-          include: {
-            _count: {
-              select: {
-                businesses: true,
+    const category = await withConnectionRetry(async () => {
+      return await prisma.category.findUnique({
+        where: { slug },
+        include: {
+          subcategories: {
+            include: {
+              _count: {
+                select: {
+                  businesses: true,
+                },
               },
             },
           },
-        },
-        businesses: {
-          where: { status: 'APPROVED' },
-          take: 10,
-        },
-        _count: {
-          select: {
-            subcategories: true,
-            businesses: true,
+          businesses: {
+            where: { status: 'APPROVED' },
+            take: 10,
+          },
+          _count: {
+            select: {
+              subcategories: true,
+              businesses: true,
+            },
           },
         },
-      },
+      });
     });
 
     if (!category) {

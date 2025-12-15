@@ -23,7 +23,7 @@ const prisma =
     },
     // Connection pool settings to prevent connection exhaustion
     // IMPORTANT: Also add connection_limit parameter to DATABASE_URL in .env
-    // Example: mysql://user:pass@host:3306/db?connection_limit=5&pool_timeout=20
+    // Example: mysql://user:pass@host:3306/db?connection_limit=5&pool_timeout=20&connect_timeout=10
   });
 
 // Store the instance globally to reuse across invocations
@@ -51,10 +51,61 @@ process.on('beforeExit', async () => {
 // Handle connection errors gracefully
 prisma.$on('error' as never, (e: any) => {
   // Only log non-connection errors to avoid spam
-  if (!e.message?.includes("Can't reach database server")) {
+  if (!e.message?.includes("Can't reach database server") && 
+      !e.message?.includes('P1001') && 
+      !e.message?.includes('P1017') &&
+      !e.message?.includes('Connection closed')) {
     console.error('Prisma Client Error:', e);
   }
 });
+
+// Connection health check and retry wrapper
+export const withConnectionRetry = async <T>(
+  operation: () => Promise<T>,
+  retries = 2,
+  delay = 500
+): Promise<T> => {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      // Check connection health before operation
+      try {
+        await prisma.$queryRaw`SELECT 1`;
+      } catch (connError) {
+        // Connection is dead, try to reconnect
+        if (i < retries) {
+          console.warn(`Connection check failed, attempting reconnect (attempt ${i + 1}/${retries})...`);
+          try {
+            await prisma.$disconnect();
+          } catch {
+            // Ignore disconnect errors
+          }
+          await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
+          try {
+            await prisma.$connect();
+          } catch {
+            // Will retry operation which will trigger reconnect
+          }
+        }
+      }
+      
+      return await operation();
+    } catch (error: any) {
+      // If it's a connection error and we have retries left, try again
+      if (
+        (error.message?.includes("Can't reach database server") ||
+         error.code === 'P1001' ||
+         error.code === 'P1017') &&
+        i < retries
+      ) {
+        console.warn(`Database operation failed, retrying (attempt ${i + 1}/${retries})...`);
+        await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error('Database operation failed after retries');
+};
 
 // Helper function to check database connectivity
 export const checkDatabaseConnection = async (): Promise<boolean> => {
