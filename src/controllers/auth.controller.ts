@@ -2,11 +2,12 @@ import { Request, Response } from 'express';
 import { OAuth2Client } from 'google-auth-library';
 import type { Prisma } from '@prisma/client';
 import prisma from '../config/database';
-import { hashPassword, comparePassword } from '../utils/password.util';
+// Password utilities no longer needed for OTP flow, but keeping import for potential future use
+// import { hashPassword, comparePassword } from '../utils/password.util';
 import { generateToken, generateRefreshToken } from '../utils/jwt.util';
 import { sendSuccess, sendError } from '../utils/response.util';
 import { generateOTP, storeOTP, verifyOTP, sendEmailOTP, sendPhoneOTP, storeRegistrationData, getRegistrationData } from '../utils/otp.util';
-import { RegisterDTO, AuthRequest, SocialLoginDTO } from '../types';
+import { AuthRequest, SocialLoginDTO, OTPRequestDTO } from '../types';
 import { capitalizeUserNames } from '../utils/name.util';
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
@@ -94,251 +95,157 @@ const fetchFacebookProfile = async (accessToken: string): Promise<ProviderProfil
   };
 };
 
-// Register user - store data temporarily and send OTP (user NOT created until OTP verified)
-export const register = async (req: Request, res: Response) => {
-  try {
-    const { email, phone, password, firstName, lastName, role }: RegisterDTO = req.body;
-
-    if (!email || !phone || !password || !firstName || !lastName) {
-      return sendError(res, 400, 'All fields are required');
-    }
-
-    // Check if user already exists
-    const existingUser = await prisma.user.findFirst({
-      where: {
-        OR: [{ email: email.toLowerCase() }, { phone }],
-      },
-    });
-
-    if (existingUser) {
-      return sendError(res, 409, 'User with this email or phone already exists');
-    }
-
-    // Store registration data temporarily (NOT in database yet)
-    storeRegistrationData(email.toLowerCase(), {
-      phone,
-      password,
-      firstName,
-      lastName,
-      role: role || 'USER',
-    });
-
-    // Check if Saudi number (+966) - send to phone, otherwise to email
-    const isSaudiNumber = phone.startsWith('+966');
-    
-    if (isSaudiNumber) {
-      // For Saudi numbers, use phone OTP (test: 1234)
-      const otp = '1234';
-      storeOTP(phone, otp);
-      // Skip actual SMS for testing
-      // await sendPhoneOTP(phone, otp);
-      
-      return sendSuccess(
-        res,
-        200,
-        'OTP sent to your phone. Please verify to complete registration.',
-        {
-          phone,
-          otpSent: true,
-          otpTarget: 'phone',
-        }
-      );
-    } else {
-      // For non-Saudi, send to email
-      const otp = generateOTP();
-      storeOTP(email.toLowerCase(), otp);
-      await sendEmailOTP(email, otp);
-
-      return sendSuccess(
-        res,
-        200,
-        'OTP sent to your email. Please verify to complete registration.',
-        {
-          email,
-          otpSent: true,
-          otpTarget: 'email',
-        }
-      );
-    }
-  } catch (error) {
-    console.error('Register error:', error);
-    return sendError(res, 500, 'Failed to register user', error);
-  }
-};
-
-// Login with Email/Phone + Password
-export const loginWithPassword = async (req: Request, res: Response) => {
-  try {
-    const { identifier, password } = req.body; // identifier can be email or phone
-
-    if (!identifier || !password) {
-      return sendError(res, 400, 'Identifier and password are required');
-    }
-
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [{ email: identifier.toLowerCase() }, { phone: identifier }],
-      },
-    });
-
-    if (!user || !user.password) {
-      return sendError(res, 401, 'Invalid credentials');
-    }
-
-    const isPasswordValid = await comparePassword(password, user.password);
-
-    if (!isPasswordValid) {
-      return sendError(res, 401, 'Invalid credentials');
-    }
-
-    if (user.status !== 'ACTIVE') {
-      return sendError(res, 403, 'Account is suspended or inactive');
-    }
-
-    // Check if email is verified (required for email-based login)
-    if (identifier.includes('@') && !user.emailVerified) {
-      return sendError(
-        res,
-        403,
-        'Email not verified. Please verify your email before logging in.'
-      );
-    }
-
-    const token = generateToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-    });
-
-    const refreshToken = generateRefreshToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-    });
-
-    const { password: _, ...userWithoutPassword } = user;
-
-    return sendSuccess(res, 200, 'Login successful', {
-      user: userWithoutPassword,
-      token,
-      refreshToken,
-    });
-  } catch (error) {
-    console.error('Login error:', error);
-    return sendError(res, 500, 'Failed to login', error);
-  }
-};
-
-// Send OTP to Email (for login - user must already exist)
+// Unified OTP flow - Send OTP to Email (auto-creates user if doesn't exist)
 export const sendEmailOTPController = async (req: Request, res: Response) => {
   try {
-    const { email } = req.body;
+    const { email, firstName, lastName, phone }: OTPRequestDTO = req.body;
 
     if (!email) {
       return sendError(res, 400, 'Email is required');
     }
 
-    const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+    const emailLower = email.toLowerCase();
+    const existingUser = await prisma.user.findUnique({ where: { email: emailLower } });
 
-    if (!user) {
-      return sendError(res, 404, 'User not found. Please register first.');
+    if (existingUser) {
+      // Existing user - login flow
+      if (existingUser.status !== 'ACTIVE') {
+        return sendError(res, 403, 'Account is suspended or inactive');
+      }
+
+      const otp = generateOTP();
+      storeOTP(emailLower, otp);
+      await sendEmailOTP(email, otp);
+
+      return sendSuccess(res, 200, 'OTP sent to email successfully', { 
+        email,
+        isNewUser: false 
+      });
+    } else {
+      // New user - signup flow
+      // Only send OTP if firstName and lastName are provided
+      if (!firstName || !lastName) {
+        return sendSuccess(res, 200, 'Please provide your name to continue', { 
+          email,
+          isNewUser: true,
+          requiresName: true
+        });
+      }
+
+      // Store temporary registration data
+      storeRegistrationData(emailLower, {
+        email: emailLower,
+        phone: phone || '',
+        firstName,
+        lastName,
+      });
+
+      const otp = generateOTP();
+      storeOTP(emailLower, otp);
+      await sendEmailOTP(email, otp);
+
+      return sendSuccess(res, 200, 'OTP sent to email successfully', { 
+        email,
+        isNewUser: true 
+      });
     }
-
-    if (user.status !== 'ACTIVE') {
-      return sendError(res, 403, 'Account is suspended or inactive');
-    }
-
-    const otp = generateOTP();
-    storeOTP(email.toLowerCase(), otp);
-    await sendEmailOTP(email, otp);
-
-    return sendSuccess(res, 200, 'OTP sent to email successfully', { email });
   } catch (error) {
     console.error('Send email OTP error:', error);
     return sendError(res, 500, 'Failed to send OTP', error);
   }
 };
 
-// Send OTP to Phone
+// Unified OTP flow - Send OTP to Phone (auto-creates user if doesn't exist, static OTP 12345)
 export const sendPhoneOTPController = async (req: Request, res: Response) => {
   try {
-    const { phone } = req.body;
+    const { phone, firstName, lastName, email }: OTPRequestDTO = req.body;
 
     if (!phone) {
       return sendError(res, 400, 'Phone number is required');
     }
 
-    const user = await prisma.user.findUnique({ where: { phone } });
+    const existingUser = await prisma.user.findUnique({ where: { phone } });
 
-    if (!user) {
-      return sendError(res, 404, 'User not found');
+    if (existingUser) {
+      // Existing user - login flow
+      if (existingUser.status !== 'ACTIVE') {
+        return sendError(res, 403, 'Account is suspended or inactive');
+      }
+
+      // Static OTP for phone: 12345
+      const otp = '12345';
+      storeOTP(phone, otp);
+      // Skip actual SMS sending for testing
+      // await sendPhoneOTP(phone, otp);
+
+      return sendSuccess(res, 200, 'OTP sent to phone successfully', { 
+        phone,
+        isNewUser: false 
+      });
+    } else {
+      // New user - signup flow
+      // Only send OTP if firstName and lastName are provided
+      if (!firstName || !lastName) {
+        return sendSuccess(res, 200, 'Please provide your name to continue', { 
+          phone,
+          isNewUser: true,
+          requiresName: true
+        });
+      }
+
+      // Store temporary registration data
+      const identifier = email ? email.toLowerCase() : phone;
+      storeRegistrationData(identifier, {
+        email: email || '',
+        phone,
+        firstName,
+        lastName,
+      });
+
+      // Static OTP for phone: 12345
+      const otp = '12345';
+      storeOTP(phone, otp);
+      // Skip actual SMS sending for testing
+      // await sendPhoneOTP(phone, otp);
+
+      return sendSuccess(res, 200, 'OTP sent to phone successfully', { 
+        phone,
+        isNewUser: true 
+      });
     }
-
-    // For testing: always use 1234 for phone OTP
-    const otp = '1234';
-    storeOTP(phone, otp);
-    // Skip actual SMS sending for testing
-    // await sendPhoneOTP(phone, otp);
-
-    return sendSuccess(res, 200, 'OTP sent to phone successfully', { phone });
   } catch (error) {
     console.error('Send phone OTP error:', error);
     return sendError(res, 500, 'Failed to send OTP', error);
   }
 };
 
-// Verify Email OTP - Creates user if registration, or logs in if existing user
+// Verify Email OTP - Unified login/signup flow
 export const verifyEmailOTP = async (req: Request, res: Response) => {
   try {
-    const { email, phone, otp } = req.body;
+    const { email, otp } = req.body;
 
-    if ((!email && !phone) || !otp) {
-      return sendError(res, 400, 'Email or phone and OTP are required');
+    if (!email || !otp) {
+      return sendError(res, 400, 'Email and OTP are required');
     }
 
-    // Determine if this is phone or email OTP
-    const identifier = phone || email?.toLowerCase();
-    const isPhoneOTP = !!phone;
-    
-    const isValid = verifyOTP(identifier, otp);
+    const emailLower = email.toLowerCase();
+    const isValid = verifyOTP(emailLower, otp);
 
     if (!isValid) {
       return sendError(res, 401, 'Invalid or expired OTP');
     }
 
     // Check if this is a registration flow (has temporary registration data)
-    // Registration data is stored by email
-    let registrationData = null;
-    if (email) {
-      registrationData = getRegistrationData(email.toLowerCase());
-    } else if (phone) {
-      // Try to find registration data by phone number
-      // We need to search for the email that matches this phone in registration data
-      // For now, we'll check using the phone's associated email from the stored data
-      const allEmails = Object.keys((globalThis as any).__otpStore || {});
-      for (const storedEmail of allEmails) {
-        const data = getRegistrationData(storedEmail);
-        if (data && data.phone === phone) {
-          registrationData = data;
-          break;
-        }
-      }
-    }
+    const registrationData = getRegistrationData(emailLower);
 
     if (registrationData) {
       // REGISTRATION FLOW: Create user now that OTP is verified
-      const userEmail = email?.toLowerCase() || Object.keys((globalThis as any).__otpStore || {}).find(e => {
-        const data = getRegistrationData(e);
-        return data && data.phone === phone;
-      });
-
-      if (!userEmail) {
-        return sendError(res, 400, 'Registration data not found');
-      }
-
       const existingUser = await prisma.user.findFirst({
         where: {
-          OR: [{ email: userEmail }, { phone: registrationData.phone }],
+          OR: [
+            { email: emailLower },
+            ...(registrationData.phone ? [{ phone: registrationData.phone }] : [])
+          ],
         },
       });
 
@@ -346,18 +253,17 @@ export const verifyEmailOTP = async (req: Request, res: Response) => {
         return sendError(res, 409, 'User with this email or phone already exists');
       }
 
-      const hashedPassword = await hashPassword(registrationData.password);
-
+      // Create user with empty password
       const user = await prisma.user.create({
         data: {
-          email: userEmail,
-          phone: registrationData.phone,
-          password: hashedPassword,
-          firstName: registrationData.firstName,
-          lastName: registrationData.lastName,
-          role: registrationData.role as 'USER' | 'BUSINESS_OWNER' | 'ADMIN',
-          emailVerified: !isPhoneOTP,
-          phoneVerified: isPhoneOTP,
+          email: emailLower,
+          phone: registrationData.phone || `EMAIL_${Date.now()}_${Math.random().toString(36).slice(-6)}`,
+          password: '', // Empty password as per requirement
+          firstName: registrationData.firstName || '',
+          lastName: registrationData.lastName || '',
+          role: 'BUSINESS_OWNER', // Default to BUSINESS_OWNER
+          emailVerified: true,
+          phoneVerified: false,
         },
         select: baseUserSelect,
       });
@@ -382,9 +288,10 @@ export const verifyEmailOTP = async (req: Request, res: Response) => {
       });
     } else {
       // LOGIN FLOW: User already exists, just verify and login
-      const user = isPhoneOTP
-        ? await prisma.user.findUnique({ where: { phone }, select: baseUserSelect })
-        : await prisma.user.findUnique({ where: { email: email.toLowerCase() }, select: baseUserSelect });
+      const user = await prisma.user.findUnique({ 
+        where: { email: emailLower }, 
+        select: baseUserSelect 
+      });
 
       if (!user) {
         return sendError(res, 404, 'User not found. Please register first.');
@@ -395,17 +302,10 @@ export const verifyEmailOTP = async (req: Request, res: Response) => {
       }
 
       // Update verification status
-      if (isPhoneOTP) {
-        await prisma.user.update({
-          where: { phone },
-          data: { phoneVerified: true },
-        });
-      } else {
-        await prisma.user.update({
-          where: { email: email.toLowerCase() },
-          data: { emailVerified: true },
-        });
-      }
+      await prisma.user.update({
+        where: { email: emailLower },
+        data: { emailVerified: true },
+      });
 
       const token = generateToken({
         userId: user.id,
@@ -432,7 +332,7 @@ export const verifyEmailOTP = async (req: Request, res: Response) => {
   }
 };
 
-// Verify Phone OTP and Login
+// Verify Phone OTP - Unified login/signup flow
 export const verifyPhoneOTP = async (req: Request, res: Response) => {
   try {
     const { phone, otp } = req.body;
@@ -447,42 +347,97 @@ export const verifyPhoneOTP = async (req: Request, res: Response) => {
       return sendError(res, 401, 'Invalid or expired OTP');
     }
 
-    const user = await prisma.user.findUnique({
-      where: { phone },
-      select: baseUserSelect,
-    });
+    // Check if this is a registration flow (has temporary registration data)
+    const registrationData = getRegistrationData(phone);
 
-    if (!user) {
-      return sendError(res, 404, 'User not found');
+    if (registrationData) {
+      // REGISTRATION FLOW: Create user now that OTP is verified
+      const existingUser = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { phone },
+            ...(registrationData.email ? [{ email: registrationData.email.toLowerCase() }] : [])
+          ],
+        },
+      });
+
+      if (existingUser) {
+        return sendError(res, 409, 'User with this email or phone already exists');
+      }
+
+      // Create user with empty password
+      const user = await prisma.user.create({
+        data: {
+          email: registrationData.email || `PHONE_${Date.now()}_${Math.random().toString(36).slice(-6)}@temp.com`,
+          phone,
+          password: '', // Empty password as per requirement
+          firstName: registrationData.firstName || '',
+          lastName: registrationData.lastName || '',
+          role: 'BUSINESS_OWNER', // Default to BUSINESS_OWNER
+          emailVerified: false,
+          phoneVerified: true,
+        },
+        select: baseUserSelect,
+      });
+
+      const token = generateToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+      });
+
+      const refreshToken = generateRefreshToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+      });
+
+      return sendSuccess(res, 201, 'Registration successful. Account created and verified.', {
+        user,
+        token,
+        refreshToken,
+        isNewUser: true,
+      });
+    } else {
+      // LOGIN FLOW: User already exists, just verify and login
+      const user = await prisma.user.findUnique({
+        where: { phone },
+        select: baseUserSelect,
+      });
+
+      if (!user) {
+        return sendError(res, 404, 'User not found');
+      }
+
+      if (user.status !== 'ACTIVE') {
+        return sendError(res, 403, 'Account is suspended or inactive');
+      }
+
+      // Update phone verification status
+      await prisma.user.update({
+        where: { phone },
+        data: { phoneVerified: true },
+      });
+
+      const token = generateToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+      });
+
+      const refreshToken = generateRefreshToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+      });
+
+      return sendSuccess(res, 200, 'Login successful', {
+        user,
+        token,
+        refreshToken,
+        isNewUser: false,
+      });
     }
-
-    if (user.status !== 'ACTIVE') {
-      return sendError(res, 403, 'Account is suspended or inactive');
-    }
-
-    // Update phone verification status
-    await prisma.user.update({
-      where: { phone },
-      data: { phoneVerified: true },
-    });
-
-    const token = generateToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-    });
-
-    const refreshToken = generateRefreshToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-    });
-
-    return sendSuccess(res, 200, 'Login successful', {
-      user,
-      token,
-      refreshToken,
-    });
   } catch (error) {
     console.error('Verify phone OTP error:', error);
     return sendError(res, 500, 'Failed to verify OTP', error);
@@ -588,18 +543,14 @@ export const socialLogin = async (req: Request, res: Response) => {
         usedPlaceholderPhone = true;
       }
 
-      const hashedPassword = await hashPassword(
-        `${provider}_${Date.now()}_${Math.random().toString(36).slice(-8)}`,
-      );
-
       user = await prisma.user.create({
         data: {
           email,
           phone: resolvedPhone,
-          password: hashedPassword,
+          password: '', // Empty password as per requirement
           firstName: profile.firstName || '',
           lastName: profile.lastName || '',
-          role: role === 'BUSINESS_OWNER' ? 'BUSINESS_OWNER' : 'USER',
+          role: 'BUSINESS_OWNER', // Default to BUSINESS_OWNER (removed USER role)
           avatar: profile.avatar,
           emailVerified: true,
         },

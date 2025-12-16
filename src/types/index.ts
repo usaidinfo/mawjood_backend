@@ -16,18 +16,13 @@ export interface PaginationQuery {
   order?: 'asc' | 'desc';
 }
 
-export interface RegisterDTO {
-  email: string;
-  phone: string;
-  password: string;
-  firstName: string;
-  lastName: string;
-  role?: 'USER' | 'BUSINESS_OWNER';
-}
-
-export interface LoginDTO {
-  email: string;
-  password: string;
+// RegisterDTO and LoginDTO removed - using unified OTP flow instead
+// For OTP flow, we'll use temporary registration data stored in memory
+export interface OTPRequestDTO {
+  email?: string;
+  phone?: string;
+  firstName?: string; // Optional for new users
+  lastName?: string; // Optional for new users
 }
 
 export type SocialProvider = 'google' | 'facebook';
@@ -35,6 +30,7 @@ export type SocialProvider = 'google' | 'facebook';
 export interface SocialLoginDTO {
   provider: SocialProvider;
   token: string;
+  phone?: string; // Required for new users
 }
 
 export interface BusinessDTO {

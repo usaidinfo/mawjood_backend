@@ -8,12 +8,10 @@ interface OTPStore {
 
 // Temporary registration store (use Redis in production)
 interface RegistrationData {
-  email: string;
-  phone: string;
-  password: string;
-  firstName: string;
-  lastName: string;
-  role: string;
+  email?: string;
+  phone?: string;
+  firstName?: string;
+  lastName?: string;
   expiresAt: Date;
 }
 
@@ -77,31 +75,45 @@ export const sendPhoneOTP = async (phone: string, otp: string): Promise<void> =>
 };
 
 // Store temporary registration data (expires in 10 minutes)
-export const storeRegistrationData = (email: string, data: Omit<RegistrationData, 'email' | 'expiresAt'>): void => {
+// Can be stored by email or phone
+export const storeRegistrationData = (identifier: string, data: Omit<RegistrationData, 'expiresAt'>): void => {
   const expiresAt = new Date();
   expiresAt.setMinutes(expiresAt.getMinutes() + 10); // 10 minutes expiry
 
-  registrationStore[email.toLowerCase()] = {
-    email: email.toLowerCase(),
+  const key = data.email ? data.email.toLowerCase() : identifier;
+  registrationStore[key] = {
     ...data,
     expiresAt,
   };
 };
 
-// Get and remove registration data
-export const getRegistrationData = (email: string): RegistrationData | null => {
-  const stored = registrationStore[email.toLowerCase()];
+// Get and remove registration data by email or phone
+export const getRegistrationData = (identifier: string): RegistrationData | null => {
+  // Try by email first
+  let stored = registrationStore[identifier.toLowerCase()];
+  
+  // If not found, search by phone
+  if (!stored) {
+    for (const key in registrationStore) {
+      if (registrationStore[key].phone === identifier) {
+        stored = registrationStore[key];
+        break;
+      }
+    }
+  }
 
   if (!stored) {
     return null;
   }
 
   if (new Date() > stored.expiresAt) {
-    delete registrationStore[email.toLowerCase()];
+    const key = stored.email ? stored.email.toLowerCase() : identifier;
+    delete registrationStore[key];
     return null;
   }
 
   // Remove after retrieval (one-time use)
-  delete registrationStore[email.toLowerCase()];
+  const key = stored.email ? stored.email.toLowerCase() : identifier;
+  delete registrationStore[key];
   return stored;
 };

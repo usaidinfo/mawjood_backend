@@ -434,8 +434,8 @@ export const updateUserRole = async (req: AuthRequest, res: Response) => {
     const { id } = req.params;
     const { role } = req.body;
 
-    if (!role || !['USER', 'BUSINESS_OWNER', 'ADMIN'].includes(role)) {
-      return sendError(res, 400, 'Invalid role. Must be USER, BUSINESS_OWNER, or ADMIN');
+    if (!role || !['BUSINESS_OWNER', 'ADMIN'].includes(role)) {
+      return sendError(res, 400, 'Invalid role. Must be BUSINESS_OWNER or ADMIN');
     }
 
     const user = await prisma.user.update({
