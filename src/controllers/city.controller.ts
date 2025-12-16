@@ -5,10 +5,48 @@ import { AuthRequest } from '../types';
 
 const prismaClient = prisma as any;
 
+type CacheEntry<T> = {
+  expiresAt: number;
+  value: T;
+};
+
+const CACHE_TTL_MS = 60 * 1000; // 1 minute
+const LOCATION_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes for location data
+
+const getCityCache = () => {
+  const globalRef = globalThis as typeof globalThis & {
+    __cityCache?: Map<string, CacheEntry<any>>;
+  };
+
+  if (!globalRef.__cityCache) {
+    globalRef.__cityCache = new Map();
+  }
+
+  return globalRef.__cityCache;
+};
+
+const clearCityCache = () => {
+  const globalRef = globalThis as typeof globalThis & {
+    __cityCache?: Map<string, CacheEntry<any>>;
+  };
+  if (globalRef.__cityCache) {
+    globalRef.__cityCache.clear();
+  }
+};
+
 // Get all countries with their regions and cities
 export const getAllCountries = async (req: Request, res: Response) => {
   try {
     const { search } = req.query;
+
+    // Cache check
+    const cacheKey = JSON.stringify({ type: 'countries', search });
+    const cityCache = getCityCache();
+    const cachedResponse = cityCache.get(cacheKey);
+    if (cachedResponse && cachedResponse.expiresAt > Date.now()) {
+      console.log('[CACHE HIT] Returning cached countries response');
+      return sendSuccess(res, 200, 'Countries fetched successfully (cached)', cachedResponse.value);
+    }
 
     const where: any = {};
     
@@ -36,6 +74,12 @@ export const getAllCountries = async (req: Request, res: Response) => {
       orderBy: { name: 'asc' },
     });
 
+    // Cache the response
+    cityCache.set(cacheKey, {
+      expiresAt: Date.now() + LOCATION_CACHE_TTL_MS,
+      value: countries,
+    });
+
     return sendSuccess(res, 200, 'Countries fetched successfully', countries);
   } catch (error) {
     console.error('Get countries error:', error);
@@ -47,6 +91,15 @@ export const getAllCountries = async (req: Request, res: Response) => {
 export const getAllRegions = async (req: Request, res: Response) => {
   try {
     const { countryId, search } = req.query;
+
+    // Cache check
+    const cacheKey = JSON.stringify({ type: 'regions', countryId, search });
+    const cityCache = getCityCache();
+    const cachedResponse = cityCache.get(cacheKey);
+    if (cachedResponse && cachedResponse.expiresAt > Date.now()) {
+      console.log('[CACHE HIT] Returning cached regions response');
+      return sendSuccess(res, 200, 'Regions fetched successfully (cached)', cachedResponse.value);
+    }
 
     const where: any = {};
     
@@ -73,6 +126,12 @@ export const getAllRegions = async (req: Request, res: Response) => {
       orderBy: { name: 'asc' },
     });
 
+    // Cache the response
+    cityCache.set(cacheKey, {
+      expiresAt: Date.now() + LOCATION_CACHE_TTL_MS,
+      value: regions,
+    });
+
     return sendSuccess(res, 200, 'Regions fetched successfully', regions);
   } catch (error) {
     console.error('Get regions error:', error);
@@ -85,6 +144,15 @@ export const getAllCities = async (req: Request, res: Response) => {
   try {
     const { regionId } = req.query;
 
+    // Cache check
+    const cacheKey = JSON.stringify({ type: 'cities', regionId });
+    const cityCache = getCityCache();
+    const cachedResponse = cityCache.get(cacheKey);
+    if (cachedResponse && cachedResponse.expiresAt > Date.now()) {
+      console.log('[CACHE HIT] Returning cached cities response');
+      return sendSuccess(res, 200, 'Cities fetched successfully (cached)', cachedResponse.value);
+    }
+
     const cities = await prismaClient.city.findMany({
       where: regionId ? { regionId: regionId as string } : {},
       include: {
@@ -95,6 +163,12 @@ export const getAllCities = async (req: Request, res: Response) => {
         },
       },
       orderBy: { name: 'asc' },
+    });
+
+    // Cache the response
+    cityCache.set(cacheKey, {
+      expiresAt: Date.now() + LOCATION_CACHE_TTL_MS,
+      value: cities,
     });
 
     return sendSuccess(res, 200, 'Cities fetched successfully', cities);
@@ -199,6 +273,9 @@ export const createCountry = async (req: AuthRequest, res: Response) => {
       data: { name, slug, code },
     });
 
+    // Clear cache after creating country
+    clearCityCache();
+
     return sendSuccess(res, 201, 'Country created successfully', country);
   } catch (error) {
     console.error('Create country error:', error);
@@ -235,6 +312,9 @@ export const createRegion = async (req: AuthRequest, res: Response) => {
       data: { name, slug, countryId },
       include: { country: true },
     });
+
+    // Clear cache after creating region
+    clearCityCache();
 
     return sendSuccess(res, 201, 'Region created successfully', region);
   } catch (error) {
@@ -282,6 +362,9 @@ export const createCity = async (req: AuthRequest, res: Response) => {
       },
     });
 
+    // Clear cache after creating city
+    clearCityCache();
+
     return sendSuccess(res, 201, 'City created successfully', city);
   } catch (error) {
     console.error('Create city error:', error);
@@ -317,6 +400,9 @@ export const updateCity = async (req: AuthRequest, res: Response) => {
       },
     });
 
+    // Clear cache after updating city
+    clearCityCache();
+
     return sendSuccess(res, 200, 'City updated successfully', city);
   } catch (error) {
     console.error('Update city error:', error);
@@ -332,6 +418,9 @@ export const deleteCity = async (req: AuthRequest, res: Response) => {
     await prismaClient.city.delete({
       where: { id },
     });
+
+    // Clear cache after deleting city
+    clearCityCache();
 
     return sendSuccess(res, 200, 'City deleted successfully');
   } catch (error) {
@@ -387,6 +476,9 @@ export const updateRegion = async (req: AuthRequest, res: Response) => {
       include: { country: true },
     });
 
+    // Clear cache after updating region
+    clearCityCache();
+
     return sendSuccess(res, 200, 'Region updated successfully', region);
   } catch (error) {
     console.error('Update region error:', error);
@@ -402,6 +494,9 @@ export const deleteRegion = async (req: AuthRequest, res: Response) => {
     await prismaClient.region.delete({
       where: { id },
     });
+
+    // Clear cache after deleting region
+    clearCityCache();
 
     return sendSuccess(res, 200, 'Region deleted successfully');
   } catch (error) {
@@ -470,6 +565,9 @@ export const updateCountry = async (req: AuthRequest, res: Response) => {
       data: updateData,
     });
 
+    // Clear cache after updating country
+    clearCityCache();
+
     return sendSuccess(res, 200, 'Country updated successfully', country);
   } catch (error) {
     console.error('Update country error:', error);
@@ -486,6 +584,9 @@ export const deleteCountry = async (req: AuthRequest, res: Response) => {
       where: { id },
     });
 
+    // Clear cache after deleting country
+    clearCityCache();
+
     return sendSuccess(res, 200, 'Country deleted successfully');
   } catch (error) {
     console.error('Delete country error:', error);
@@ -497,6 +598,15 @@ export const deleteCountry = async (req: AuthRequest, res: Response) => {
 export const unifiedLocationSearch = async (req: Request, res: Response) => {
   try {
     const { query } = req.query;
+
+    // Cache check
+    const cacheKey = JSON.stringify({ type: 'unifiedLocationSearch', query });
+    const cityCache = getCityCache();
+    const cachedResponse = cityCache.get(cacheKey);
+    if (cachedResponse && cachedResponse.expiresAt > Date.now()) {
+      console.log('[CACHE HIT] Returning cached unified location search response');
+      return sendSuccess(res, 200, 'Search completed successfully (cached)', cachedResponse.value);
+    }
 
     const searchTerm = typeof query === 'string' ? query.trim() : '';
     const hasSearch = searchTerm.length > 0;
@@ -568,11 +678,19 @@ export const unifiedLocationSearch = async (req: Request, res: Response) => {
       }),
     ]);
 
-    return sendSuccess(res, 200, 'Search completed successfully', {
+    const responsePayload = {
       countries,
       regions,
       cities,
+    };
+
+    // Cache the response
+    cityCache.set(cacheKey, {
+      expiresAt: Date.now() + LOCATION_CACHE_TTL_MS,
+      value: responsePayload,
     });
+
+    return sendSuccess(res, 200, 'Search completed successfully', responsePayload);
   } catch (error) {
     console.error('Unified search error:', error);
     return sendError(res, 500, 'Failed to complete search', error);

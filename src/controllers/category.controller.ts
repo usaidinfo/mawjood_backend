@@ -4,11 +4,48 @@ import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest } from '../types';
 import { uploadToCloudinary } from '../config/cloudinary';
 
+type CacheEntry<T> = {
+  expiresAt: number;
+  value: T;
+};
+
+const CACHE_TTL_MS = 60 * 1000; // 1 minute
+
+const getCategoryCache = () => {
+  const globalRef = globalThis as typeof globalThis & {
+    __categoryCache?: Map<string, CacheEntry<any>>;
+  };
+
+  if (!globalRef.__categoryCache) {
+    globalRef.__categoryCache = new Map();
+  }
+
+  return globalRef.__categoryCache;
+};
+
+const clearCategoryCache = () => {
+  const globalRef = globalThis as typeof globalThis & {
+    __categoryCache?: Map<string, CacheEntry<any>>;
+  };
+  if (globalRef.__categoryCache) {
+    globalRef.__categoryCache.clear();
+  }
+};
+
 // Get all categories with subcategories
 export const getAllCategories = async (req: Request, res: Response) => {
   try {
     const { page = '1', limit = '20' } = req.query;
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+
+    // Cache check
+    const cacheKey = JSON.stringify({ page, limit });
+    const categoryCache = getCategoryCache();
+    const cachedResponse = categoryCache.get(cacheKey);
+    if (cachedResponse && cachedResponse.expiresAt > Date.now()) {
+      console.log('[CACHE HIT] Returning cached categories response');
+      return sendSuccess(res, 200, 'Categories fetched successfully (cached)', cachedResponse.value);
+    }
 
     const [categories, total] = await Promise.all([
       prisma.category.findMany({
@@ -33,7 +70,7 @@ export const getAllCategories = async (req: Request, res: Response) => {
       }),
     ]);
 
-    return sendSuccess(res, 200, 'Categories fetched successfully', {
+    const responsePayload = {
       categories,
       pagination: {
         total,
@@ -41,7 +78,15 @@ export const getAllCategories = async (req: Request, res: Response) => {
         limit: parseInt(limit as string),
         totalPages: Math.ceil(total / parseInt(limit as string)),
       },
+    };
+
+    // Cache the response
+    categoryCache.set(cacheKey, {
+      expiresAt: Date.now() + CACHE_TTL_MS,
+      value: responsePayload,
     });
+
+    return sendSuccess(res, 200, 'Categories fetched successfully', responsePayload);
   } catch (error) {
     console.error('Get categories error:', error);
     return sendError(res, 500, 'Failed to fetch categories', error);
@@ -218,6 +263,9 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
       },
     });
 
+    // Clear cache after creating category
+    clearCategoryCache();
+
     return sendSuccess(res, 201, 'Category created successfully', category);
   } catch (error) {
     console.error('Create category error:', error);
@@ -311,6 +359,9 @@ export const updateCategory = async (req: AuthRequest, res: Response) => {
       data: updateData,
     });
 
+    // Clear cache after updating category
+    clearCategoryCache();
+
     return sendSuccess(res, 200, 'Category updated successfully', category);
   } catch (error) {
     console.error('Update category error:', error);
@@ -328,6 +379,9 @@ export const deleteCategory = async (req: AuthRequest, res: Response) => {
     await prisma.category.delete({
       where: { id },
     });
+
+    // Clear cache after deleting category
+    clearCategoryCache();
 
     return sendSuccess(res, 200, 'Category deleted successfully');
   } catch (error) {

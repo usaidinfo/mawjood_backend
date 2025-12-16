@@ -815,7 +815,7 @@ export const assignSponsorSubscription = async (req: AuthRequest, res: Response)
 
 export const getAllSubscriptions = async (req: Request, res: Response) => {
   try {
-    const { page = '1', limit = '100', status, businessId, search, startDate, endDate } = req.query;
+    const { page = '1', limit = '100', status, businessId, planId, search, startDate, endDate } = req.query;
     const skip = (parseInt(page as string, 10) - 1) * parseInt(limit as string, 10);
 
     const where: any = {};
@@ -825,7 +825,6 @@ export const getAllSubscriptions = async (req: Request, res: Response) => {
     if (businessId) {
       where.businessId = businessId;
     }
-    
     // Date range filtering
     if (startDate || endDate) {
       where.createdAt = {};
@@ -845,9 +844,14 @@ export const getAllSubscriptions = async (req: Request, res: Response) => {
       }
     }
     
+    // Build search and plan filters
+    const searchConditions: any[] = [];
+    const sponsorConditions: any[] = [];
+    
+    // Search conditions
     if (typeof search === 'string' && search.trim().length > 0) {
       const term = search.trim();
-      where.OR = [
+      searchConditions.push(
         {
           business: {
             is: {
@@ -869,7 +873,53 @@ export const getAllSubscriptions = async (req: Request, res: Response) => {
             },
           },
         },
+        {
+          paymentReference: { contains: term },
+        }
+      );
+    }
+    
+    // Plan filter conditions
+    if (planId) {
+      if (planId === 'sponsor') {
+        // Sponsor subscriptions identified by plan.isSponsorPlan
+        sponsorConditions.push({
+          plan: {
+            isSponsorPlan: true,
+          },
+        });
+        // Sponsor subscriptions identified by paymentProvider
+        sponsorConditions.push({
+          paymentProvider: 'SPONSOR',
+        });
+        // Sponsor subscriptions identified by payment reference
+        sponsorConditions.push({
+          paymentReference: {
+            startsWith: 'SPONSOR-',
+          },
+        });
+      } else {
+        where.planId = planId;
+      }
+    }
+    
+    // Combine search and sponsor conditions
+    if (searchConditions.length > 0 && sponsorConditions.length > 0) {
+      // Both search and sponsor filter - need AND with ORs
+      where.AND = [
+        {
+          OR: searchConditions,
+        },
+        {
+          OR: sponsorConditions,
+        },
       ];
+    } else if (searchConditions.length > 0) {
+      // Only search
+      where.OR = searchConditions;
+    } else if (sponsorConditions.length > 0) {
+      // Only sponsor filter
+      where.OR = sponsorConditions;
     }
 
     // First, check and update expired subscriptions

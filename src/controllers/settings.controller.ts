@@ -2,6 +2,34 @@ import { Request, Response } from 'express';
 import prisma from '../config/database';
 import { sendSuccess, sendError } from '../utils/response.util';
 
+type CacheEntry<T> = {
+  expiresAt: number;
+  value: T;
+};
+
+const CACHE_TTL_MS = 60 * 1000; // 1 minute
+
+const getSettingsCache = () => {
+  const globalRef = globalThis as typeof globalThis & {
+    __settingsCache?: Map<string, CacheEntry<any>>;
+  };
+
+  if (!globalRef.__settingsCache) {
+    globalRef.__settingsCache = new Map();
+  }
+
+  return globalRef.__settingsCache;
+};
+
+const clearSettingsCache = () => {
+  const globalRef = globalThis as typeof globalThis & {
+    __settingsCache?: Map<string, CacheEntry<any>>;
+  };
+  if (globalRef.__settingsCache) {
+    globalRef.__settingsCache.clear();
+  }
+};
+
 const SETTINGS_KEY = 'default';
 
 const DEFAULT_SITE_SETTINGS = {
@@ -265,7 +293,23 @@ const ensureSiteSettings = async () => {
 
 export const getSiteSettings = async (_req: Request, res: Response) => {
   try {
+    // Cache check
+    const cacheKey = 'site-settings';
+    const settingsCache = getSettingsCache();
+    const cachedResponse = settingsCache.get(cacheKey);
+    if (cachedResponse && cachedResponse.expiresAt > Date.now()) {
+      console.log('[CACHE HIT] Returning cached site settings response');
+      return sendSuccess(res, 200, 'Site settings fetched successfully (cached)', cachedResponse.value);
+    }
+
     const settings = await ensureSiteSettings();
+
+    // Cache the response
+    settingsCache.set(cacheKey, {
+      expiresAt: Date.now() + CACHE_TTL_MS,
+      value: settings,
+    });
+
     return sendSuccess(res, 200, 'Site settings fetched successfully', settings);
   } catch (error) {
     console.error('Get site settings error:', error);
@@ -316,6 +360,9 @@ export const updateSiteSettings = async (req: Request, res: Response) => {
       where: { id: settings.id },
       data,
     });
+
+    // Clear cache after updating settings
+    clearSettingsCache();
 
     return sendSuccess(res, 200, 'Site settings updated successfully', updated);
   } catch (error) {
