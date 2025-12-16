@@ -88,7 +88,7 @@ export const createEnquiry = async (req: AuthRequest, res: Response) => {
     // Send email notification to business owner
     try {
       const enquiryUrl = `${process.env.FRONTEND_URL || 'https://mawjood.com'}/dashboard/enquiries`;
-      const businessUrl = `${process.env.FRONTEND_URL || 'https://mawjood.com'}/business/${business.slug}`;
+      const businessUrl = `${process.env.FRONTEND_URL || 'https://mawjood.com'}/businesses/${business.slug}`;
       
       const html = `
         <!DOCTYPE html>
@@ -154,7 +154,7 @@ export const createEnquiry = async (req: AuthRequest, res: Response) => {
           type: 'NEW_ENQUIRY',
           title: 'New Business Enquiry',
           message: `You have received a new enquiry from ${name} for ${business.name}`,
-          link: `/dashboard/enquiries?enquiryId=${enquiry.id}`,
+          link: `/dashboard/enquiries`,
         },
       });
     } catch (notificationError) {
@@ -422,7 +422,7 @@ export const updateEnquiryStatus = async (req: AuthRequest, res: Response) => {
         const businessName = updatedEnquiry.business.name || 'the business';
         const businessSlug = updatedEnquiry.business.slug || '';
         const businessUrl = businessSlug 
-          ? `${process.env.FRONTEND_URL || 'https://mawjood.com'}/business/${businessSlug}`
+          ? `${process.env.FRONTEND_URL || 'https://mawjood.com'}/businesses/${businessSlug}`
           : `${process.env.FRONTEND_URL || 'https://mawjood.com'}/businesses`;
         
         const html = `
