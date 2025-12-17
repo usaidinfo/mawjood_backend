@@ -1912,7 +1912,7 @@ export const getFeaturedBusinesses = async (req: Request, res: Response) => {
 
     const baseWhere: any = {
       status: 'APPROVED',
-      isVerified: true,
+      // Removed isVerified requirement - show both verified and unverified
     };
 
     const resolvedLocationId =
@@ -1951,11 +1951,71 @@ export const getFeaturedBusinesses = async (req: Request, res: Response) => {
         },
     };
 
-    const buildWhereWithCityIds = (cityIds?: string[]) => {
-      const whereClause = { ...baseWhere };
+    // Get country ID from the location to filter businesses by country
+    let countryId: string | null = null;
+    if (resolvedLocationId) {
+      if (resolvedLocationType === 'country') {
+        countryId = resolvedLocationId;
+      } else {
+        // Get country from city or region
+        if (resolvedLocationType === 'city' || !resolvedLocationType) {
+          const city = await prisma.city.findUnique({
+            where: { id: resolvedLocationId },
+            select: {
+              region: {
+                select: {
+                  countryId: true,
+                },
+              },
+            },
+          });
+          if (city?.region?.countryId) {
+            countryId = city.region.countryId;
+          }
+        } else if (resolvedLocationType === 'region') {
+          const region = await prisma.region.findUnique({
+            where: { id: resolvedLocationId },
+            select: { countryId: true },
+          });
+          if (region?.countryId) {
+            countryId = region.countryId;
+          }
+        }
+      }
+    }
+
+    // Get all city IDs in the country for filtering
+    let countryCityIds: string[] = [];
+    if (countryId) {
+      const countryRegions = await prisma.region.findMany({
+        where: { countryId },
+        select: { id: true },
+      });
+      const regionIds = countryRegions.map(r => r.id);
+      if (regionIds.length > 0) {
+        const cities = await prisma.city.findMany({
+          where: { regionId: { in: regionIds } },
+          select: { id: true },
+        });
+        countryCityIds = cities.map(c => c.id);
+      }
+    }
+
+    const buildWhereWithCityIds = (cityIds?: string[], restrictToCountry = false) => {
+      const whereClause: any = { ...baseWhere };
       if (cityIds && cityIds.length > 0) {
         whereClause.cityId =
           cityIds.length === 1 ? cityIds[0] : { in: Array.from(new Set(cityIds)) };
+      }
+      // Ensure businesses are only from the same country
+      if (restrictToCountry && countryCityIds.length > 0) {
+        if (cityIds && cityIds.length > 0) {
+          // Filter cityIds to only those in the country
+          const validCityIds = cityIds.filter(id => countryCityIds.includes(id));
+          whereClause.cityId = validCityIds.length === 1 ? validCityIds[0] : { in: validCityIds };
+        } else {
+          whereClause.cityId = { in: countryCityIds };
+        }
       }
       return whereClause;
     };
@@ -1981,22 +2041,76 @@ export const getFeaturedBusinesses = async (req: Request, res: Response) => {
     }
 
     let appliedLocationLevel: LocationLevel | null = null;
-    const businesses =
-      locationHierarchy && locationHierarchy.levels.length > 0
-        ? await (async () => {
-            for (const level of locationHierarchy!.levels) {
-              if (!level.cityIds.length) {
-                continue;
-              }
-              const result = await fetchFeaturedByCityIds(level.cityIds);
-              if (result.length > 0) {
-                appliedLocationLevel = level;
-                return result;
-              }
-            }
-            return await fetchFeaturedByCityIds();
-          })()
-        : await fetchFeaturedByCityIds();
+    let businesses: any[] = [];
+    const limitNum = parseInt(limit as string);
+    const addedBusinessIds = new Set<string>();
+
+    if (locationHierarchy && locationHierarchy.levels.length > 0) {
+      // Try each level in hierarchy, filling up to the limit
+      for (const level of locationHierarchy.levels) {
+        if (!level.cityIds.length || businesses.length >= limitNum) {
+          break;
+        }
+
+        // Filter cityIds to only those in the same country
+        const countryFilteredCityIds = countryCityIds.length > 0
+          ? level.cityIds.filter(id => countryCityIds.includes(id))
+          : level.cityIds;
+
+        if (countryFilteredCityIds.length === 0) {
+          continue; // Skip this level if no cities in the country
+        }
+
+        // Get businesses from this level, excluding already added ones, restricted to country
+        const whereClause: any = buildWhereWithCityIds(countryFilteredCityIds, true);
+        if (addedBusinessIds.size > 0) {
+          whereClause.id = { notIn: Array.from(addedBusinessIds) };
+        }
+        
+        const levelBusinesses = await prisma.business.findMany({
+          where: whereClause,
+          include: includeConfig,
+          orderBy: [
+            { averageRating: 'desc' },
+            { totalReviews: 'desc' },
+            { createdAt: 'desc' },
+          ],
+          take: limitNum - businesses.length,
+        });
+
+        // Add businesses from this level
+        for (const business of levelBusinesses) {
+          if (businesses.length < limitNum) {
+            businesses.push(business);
+            addedBusinessIds.add(business.id);
+          }
+        }
+
+        // Mark the first level that contributed businesses as applied
+        if (levelBusinesses.length > 0 && !appliedLocationLevel) {
+          appliedLocationLevel = level;
+        }
+      }
+
+      // If still not enough, don't go outside the country - just return what we have
+      // (This ensures we never show businesses from other countries)
+    } else {
+      // No location specified, just get featured businesses (but still restrict to country if we know it)
+      if (countryCityIds.length > 0) {
+        businesses = await prisma.business.findMany({
+          where: buildWhereWithCityIds(countryCityIds, true),
+          include: includeConfig,
+          orderBy: [
+            { averageRating: 'desc' },
+            { totalReviews: 'desc' },
+            { createdAt: 'desc' },
+          ],
+          take: limitNum,
+        });
+      } else {
+        businesses = await fetchFeaturedByCityIds();
+      }
+    }
 
     const locationContext = locationHierarchy
       ? {

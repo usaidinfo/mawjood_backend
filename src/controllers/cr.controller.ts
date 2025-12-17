@@ -14,12 +14,12 @@ export const verifyCRBasic = async (req: Request, res: Response) => {
       return sendError(res, 400, 'CR number is required');
     }
 
-    // Validate CR number format (must be 10 digits)
-    if (!/^\d{10}$/.test(crNumber)) {
+    // Validate CR National Number format (as per Wathq guidance - can be any numeric value like 700 for testing)
+    if (!/^\d+$/.test(crNumber) || crNumber.trim() === '') {
       return sendError(
         res,
         400,
-        'Invalid CR number format. Must be exactly 10 digits'
+        'Invalid CR National Number format. Must be a valid numeric value'
       );
     }
 
@@ -65,12 +65,12 @@ export const verifyCRFull = async (req: Request, res: Response) => {
       return sendError(res, 400, 'CR number is required');
     }
 
-    // Validate CR number format (must be 10 digits)
-    if (!/^\d{10}$/.test(crNumber)) {
+    // Validate CR National Number format (as per Wathq guidance - can be any numeric value like 700 for testing)
+    if (!/^\d+$/.test(crNumber) || crNumber.trim() === '') {
       return sendError(
         res,
         400,
-        'Invalid CR number format. Must be exactly 10 digits'
+        'Invalid CR National Number format. Must be a valid numeric value'
       );
     }
 
