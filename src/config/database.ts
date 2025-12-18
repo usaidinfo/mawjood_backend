@@ -7,6 +7,16 @@ const globalForPrisma = globalThis as typeof globalThis & {
   prisma?: PrismaClient;
 };
 
+// Validate DATABASE_URL has connection pooling parameters
+const dbUrl = process.env.DATABASE_URL || '';
+const hasConnectionLimit = dbUrl.includes('connection_limit');
+
+if (!hasConnectionLimit && process.env.NODE_ENV === 'production') {
+  console.warn('⚠️  WARNING: DATABASE_URL missing connection_limit parameter!');
+  console.warn('   This can cause "max_connections_per_hour" errors in production.');
+  console.warn('   Add ?connection_limit=2&pool_timeout=20&connect_timeout=10 to your DATABASE_URL');
+}
+
 // Create or reuse existing Prisma Client instance
 // In serverless (Vercel/Lambda), global object persists between warm invocations
 // In regular Node.js, it prevents multiple instances during hot reload
@@ -22,8 +32,9 @@ const prisma =
       },
     },
     // Connection pool settings to prevent connection exhaustion
-    // IMPORTANT: Also add connection_limit parameter to DATABASE_URL in .env
-    // Example: mysql://user:pass@host:3306/db?connection_limit=5&pool_timeout=20&connect_timeout=10
+    // IMPORTANT: Add connection_limit parameter to DATABASE_URL in .env
+    // Example: mysql://user:pass@host:3306/db?connection_limit=2&pool_timeout=20&connect_timeout=10
+    // For serverless environments, use connection_limit=2 (very conservative) to stay under limits
   });
 
 // Store the instance globally to reuse across invocations
@@ -31,6 +42,11 @@ const prisma =
 // Without this, Vercel/Lambda creates new connections on every function invocation
 // which exhausts shared hosting MySQL connection limits (usually 5-10 connections)
 globalForPrisma.prisma = prisma;
+
+// Ensure connection is established lazily and reused
+// Prisma Client uses connection pooling internally, so connections are automatically reused
+// The singleton pattern ensures the same Prisma instance (and its connection pool) is reused
+// across all function invocations within the same container/warm instance
 
 // Only set up query logging in development
 if (process.env.NODE_ENV === 'development') {

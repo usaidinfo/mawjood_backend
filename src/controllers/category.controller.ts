@@ -9,7 +9,8 @@ type CacheEntry<T> = {
   value: T;
 };
 
-const CACHE_TTL_MS = 60 * 1000; // 1 minute
+// Increased cache TTL to 10 minutes since categories don't change frequently
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 const getCategoryCache = () => {
   const globalRef = globalThis as typeof globalThis & {
@@ -35,52 +36,227 @@ const clearCategoryCache = () => {
 // Get all categories with subcategories
 export const getAllCategories = async (req: Request, res: Response) => {
   try {
-    const { page = '1', limit = '20' } = req.query;
+    const { page = '1', limit = '20', search } = req.query;
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+    const searchTerm = typeof search === 'string' ? search.trim() : '';
 
-    // Cache check
-    const cacheKey = JSON.stringify({ page, limit });
     const categoryCache = getCategoryCache();
+    
+    // For search queries, don't use cache and always query database
+    if (searchTerm) {
+      const limitNum = parseInt(limit as string);
+      
+      // Search in both parent categories and subcategories
+      // First, find all categories (parent or child) that match the search
+      const allMatchingCategories = await withConnectionRetry(async () => {
+        return await prisma.category.findMany({
+          where: {
+            OR: [
+              { name: { contains: searchTerm } },
+              { description: { contains: searchTerm } },
+            ],
+          },
+          select: {
+            id: true,
+            parentId: true,
+          },
+        });
+      });
+
+      // Get all unique parent IDs (either the category itself if it's a parent, or its parentId)
+      const parentIds = new Set<string>();
+      allMatchingCategories.forEach(cat => {
+        if (cat.parentId) {
+          parentIds.add(cat.parentId);
+        } else {
+          parentIds.add(cat.id);
+        }
+      });
+
+      // Now fetch all parent categories that either match or have matching subcategories
+      const where: any = {
+        OR: [
+          { id: { in: Array.from(parentIds) } },
+          {
+            subcategories: {
+              some: {
+                OR: [
+                  { name: { contains: searchTerm } },
+                  { description: { contains: searchTerm } },
+                ],
+              },
+            },
+          },
+        ],
+      };
+
+      const [categories, total] = await withConnectionRetry(async () => {
+        return await Promise.all([
+          prisma.category.findMany({
+            where,
+            include: {
+              subcategories: {
+                where: {
+                  OR: [
+                    { name: { contains: searchTerm } },
+                    { description: { contains: searchTerm } },
+                  ],
+                },
+                orderBy: { order: 'asc' },
+              },
+              _count: {
+                select: {
+                  subcategories: true,
+                  businesses: true,
+                },
+              },
+            },
+            orderBy: { order: 'asc' },
+            take: limitNum,
+          }),
+          prisma.category.count({ where }),
+        ]);
+      });
+
+      const responsePayload = {
+        categories,
+        pagination: {
+          total,
+          page: parseInt(page as string),
+          limit: limitNum,
+          totalPages: Math.ceil(total / limitNum),
+        },
+      };
+
+      return sendSuccess(res, 200, 'Categories fetched successfully', responsePayload);
+    }
+    
+    // Check if we have ALL categories cached (without pagination)
+    // This optimizes for the common case where frontend fetches all categories
+    const allCategoriesCacheKey = 'all_categories_no_pagination';
+    const allCachedResponse = categoryCache.get(allCategoriesCacheKey);
+    
+    if (allCachedResponse && allCachedResponse.expiresAt > Date.now()) {
+      // We have all categories cached, just paginate from cache
+      const allCategories = allCachedResponse.value.categories;
+      const total = allCachedResponse.value.total;
+      const paginatedCategories = allCategories.slice(skip, skip + parseInt(limit as string));
+      
+      console.log('[CACHE HIT] Returning paginated categories from cache');
+      return sendSuccess(res, 200, 'Categories fetched successfully (cached)', {
+        categories: paginatedCategories,
+        pagination: {
+          total,
+          page: parseInt(page as string),
+          limit: parseInt(limit as string),
+          totalPages: Math.ceil(total / parseInt(limit as string)),
+        },
+      });
+    }
+
+    // Check specific pagination cache (only if not using "all categories" cache)
+    const cacheKey = JSON.stringify({ page, limit });
     const cachedResponse = categoryCache.get(cacheKey);
     if (cachedResponse && cachedResponse.expiresAt > Date.now()) {
       console.log('[CACHE HIT] Returning cached categories response');
       return sendSuccess(res, 200, 'Categories fetched successfully (cached)', cachedResponse.value);
     }
 
-    const [categories, total] = await Promise.all([
-      prisma.category.findMany({
-        where: { parentId: null },
-        include: {
-          subcategories: {
+    // If limit is high (>=100), fetch ALL categories at once and cache them
+    // This optimizes for the common pattern where frontend fetches all categories
+    const limitNum = parseInt(limit as string);
+    if (limitNum >= 100) {
+      const [allCategories, total] = await withConnectionRetry(async () => {
+        return await Promise.all([
+          prisma.category.findMany({
+            where: { parentId: null },
+            include: {
+              subcategories: {
+                orderBy: { order: 'asc' },
+              },
+              _count: {
+                select: {
+                  subcategories: true,
+                  businesses: true,
+                },
+              },
+            },
             orderBy: { order: 'asc' },
-          },
-          _count: {
-            select: {
-              subcategories: true,
-              businesses: true,
+          }),
+          prisma.category.count({
+            where: { parentId: null },
+          }),
+        ]);
+      });
+
+      // Cache ALL categories for future pagination requests
+      categoryCache.set(allCategoriesCacheKey, {
+        expiresAt: Date.now() + CACHE_TTL_MS,
+        value: {
+          categories: allCategories,
+          total,
+        },
+      });
+      console.log('[CACHE] Stored all categories for future pagination');
+
+      // Paginate from the fetched result
+      const paginatedCategories = allCategories.slice(skip, skip + limitNum);
+      const responsePayload = {
+        categories: paginatedCategories,
+        pagination: {
+          total,
+          page: parseInt(page as string),
+          limit: limitNum,
+          totalPages: Math.ceil(total / limitNum),
+        },
+      };
+
+      // Also cache this specific pagination
+      categoryCache.set(cacheKey, {
+        expiresAt: Date.now() + CACHE_TTL_MS,
+        value: responsePayload,
+      });
+
+      return sendSuccess(res, 200, 'Categories fetched successfully', responsePayload);
+    }
+
+    // For smaller limits, use paginated query - reuse single connection
+    const [categories, total] = await withConnectionRetry(async () => {
+      return await Promise.all([
+        prisma.category.findMany({
+          where: { parentId: null },
+          include: {
+            subcategories: {
+              orderBy: { order: 'asc' },
+            },
+            _count: {
+              select: {
+                subcategories: true,
+                businesses: true,
+              },
             },
           },
-        },
-        orderBy: { order: 'asc' },
-        skip,
-        take: parseInt(limit as string),
-      }),
-      prisma.category.count({
-        where: { parentId: null },
-      }),
-    ]);
+          orderBy: { order: 'asc' },
+          skip,
+          take: limitNum,
+        }),
+        prisma.category.count({
+          where: { parentId: null },
+        }),
+      ]);
+    });
 
     const responsePayload = {
       categories,
       pagination: {
         total,
         page: parseInt(page as string),
-        limit: parseInt(limit as string),
-        totalPages: Math.ceil(total / parseInt(limit as string)),
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
       },
     };
 
-    // Cache the response
+    // Cache the paginated response
     categoryCache.set(cacheKey, {
       expiresAt: Date.now() + CACHE_TTL_MS,
       value: responsePayload,
@@ -139,6 +315,17 @@ export const getCategoryBySlug = async (req: Request, res: Response) => {
   try {
     const { slug } = req.params;
 
+    const categoryCache = getCategoryCache();
+    const cacheKey = `category_slug_${slug}`;
+    
+    // Check cache first
+    const cachedResponse = categoryCache.get(cacheKey);
+    if (cachedResponse && cachedResponse.expiresAt > Date.now()) {
+      console.log(`[CACHE HIT] Returning cached category by slug: ${slug}`);
+      return sendSuccess(res, 200, 'Category fetched successfully (cached)', cachedResponse.value);
+    }
+
+    // Fetch from database - reuse single connection
     const category = await withConnectionRetry(async () => {
       return await prisma.category.findUnique({
         where: { slug },
@@ -169,6 +356,12 @@ export const getCategoryBySlug = async (req: Request, res: Response) => {
     if (!category) {
       return sendError(res, 404, 'Category not found');
     }
+
+    // Cache the response
+    categoryCache.set(cacheKey, {
+      expiresAt: Date.now() + CACHE_TTL_MS,
+      value: category,
+    });
 
     return sendSuccess(res, 200, 'Category fetched successfully', category);
   } catch (error) {

@@ -521,22 +521,19 @@ export const socialLogin = async (req: Request, res: Response) => {
         select: baseUserSelect,
       });
     } else {
-      if (!phone) {
-        return sendError(
-          res,
-          400,
-          'Phone number is required to complete registration with social login',
-        );
-      }
-
-      const phoneExists = await prisma.user.findUnique({ where: { phone } });
-      if (phoneExists) {
-        return sendError(res, 409, 'Phone number is already associated with another account');
-      }
-
-      let resolvedPhone = phone;
-
-      if (!resolvedPhone) {
+      // New user registration - phone is optional, generate placeholder if not provided
+      let resolvedPhone: string;
+      
+      if (phone) {
+        // If phone is provided, check if it already exists
+        const phoneExists = await prisma.user.findUnique({ where: { phone } });
+        if (phoneExists) {
+          return sendError(res, 409, 'Phone number is already associated with another account');
+        }
+        resolvedPhone = phone;
+        usedPlaceholderPhone = false;
+      } else {
+        // Generate a placeholder phone if not provided
         resolvedPhone = `SOCIAL_${provider}_${Date.now()}_${Math.random()
           .toString(36)
           .slice(-6)}`;

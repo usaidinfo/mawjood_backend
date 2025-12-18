@@ -1570,7 +1570,6 @@ export const getMyBusinesses = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// Approve business (Admin only)
 export const approveBusiness = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
@@ -1579,11 +1578,9 @@ export const approveBusiness = async (req: AuthRequest, res: Response) => {
       where: { id },
       data: {
         status: 'APPROVED',
-        isVerified: true,
       },
     });
 
-    // Create notification for business owner
     await prisma.notification.create({
       data: {
         userId: business.userId,

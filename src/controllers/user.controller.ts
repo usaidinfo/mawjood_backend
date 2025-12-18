@@ -45,7 +45,22 @@ export const getUserProfile = async (req: AuthRequest, res: Response) => {
 export const updateUserProfile = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.userId;
-    const { firstName, lastName } = req.body;
+    const { firstName, lastName, email, phone } = req.body;
+
+    // Get current user to check verification status
+    const currentUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        emailVerified: true,
+        phoneVerified: true,
+        email: true,
+        phone: true,
+      },
+    });
+
+    if (!currentUser) {
+      return sendError(res, 404, 'User not found');
+    }
 
     let avatar = undefined;
 
@@ -59,6 +74,44 @@ export const updateUserProfile = async (req: AuthRequest, res: Response) => {
     if (lastName) updateData.lastName = lastName;
     if (avatar) updateData.avatar = avatar;
 
+    // Only allow email update if not verified
+    if (email !== undefined) {
+      if (currentUser.emailVerified) {
+        return sendError(res, 400, 'Cannot update verified email');
+      }
+      // Check if email is already taken by another user
+      const emailExists = await prisma.user.findFirst({
+        where: {
+          email,
+          id: { not: userId },
+        },
+      });
+      if (emailExists) {
+        return sendError(res, 409, 'Email is already taken');
+      }
+      updateData.email = email;
+      updateData.emailVerified = false; // Reset verification when email changes
+    }
+
+    // Only allow phone update if not verified
+    if (phone !== undefined) {
+      if (currentUser.phoneVerified) {
+        return sendError(res, 400, 'Cannot update verified phone number');
+      }
+      // Check if phone is already taken by another user
+      const phoneExists = await prisma.user.findFirst({
+        where: {
+          phone,
+          id: { not: userId },
+        },
+      });
+      if (phoneExists) {
+        return sendError(res, 409, 'Phone number is already taken');
+      }
+      updateData.phone = phone;
+      updateData.phoneVerified = false; // Reset verification when phone changes
+    }
+
     const user = await prisma.user.update({
       where: { id: userId },
       data: updateData,
@@ -70,6 +123,8 @@ export const updateUserProfile = async (req: AuthRequest, res: Response) => {
         lastName: true,
         role: true,
         avatar: true,
+        emailVerified: true,
+        phoneVerified: true,
         createdAt: true,
         updatedAt: true,
       },

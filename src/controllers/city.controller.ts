@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import prisma from '../config/database';
+import prisma, { withConnectionRetry } from '../config/database';
 import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest } from '../types';
 
@@ -59,19 +59,21 @@ export const getAllCountries = async (req: Request, res: Response) => {
       ];
     }
 
-    const countries = await prismaClient.country.findMany({
-      where,
-      include: {
-        regions: {
-          include: {
-            cities: {
-              orderBy: { name: 'asc' },
+    const countries = await withConnectionRetry(async () => {
+      return await prismaClient.country.findMany({
+        where,
+        include: {
+          regions: {
+            include: {
+              cities: {
+                orderBy: { name: 'asc' },
+              },
             },
+            orderBy: { name: 'asc' },
           },
-          orderBy: { name: 'asc' },
         },
-      },
-      orderBy: { name: 'asc' },
+        orderBy: { name: 'asc' },
+      });
     });
 
     // Cache the response
@@ -115,15 +117,17 @@ export const getAllRegions = async (req: Request, res: Response) => {
       ];
     }
 
-    const regions = await prismaClient.region.findMany({
-      where,
-      include: {
-        country: true,
-        cities: {
-          orderBy: { name: 'asc' },
+    const regions = await withConnectionRetry(async () => {
+      return await prismaClient.region.findMany({
+        where,
+        include: {
+          country: true,
+          cities: {
+            orderBy: { name: 'asc' },
+          },
         },
-      },
-      orderBy: { name: 'asc' },
+        orderBy: { name: 'asc' },
+      });
     });
 
     // Cache the response
@@ -153,16 +157,18 @@ export const getAllCities = async (req: Request, res: Response) => {
       return sendSuccess(res, 200, 'Cities fetched successfully (cached)', cachedResponse.value);
     }
 
-    const cities = await prismaClient.city.findMany({
-      where: regionId ? { regionId: regionId as string } : {},
-      include: {
-        region: {
-          include: {
-            country: true,
+    const cities = await withConnectionRetry(async () => {
+      return await prismaClient.city.findMany({
+        where: regionId ? { regionId: regionId as string } : {},
+        include: {
+          region: {
+            include: {
+              country: true,
+            },
           },
         },
-      },
-      orderBy: { name: 'asc' },
+        orderBy: { name: 'asc' },
+      });
     });
 
     // Cache the response
@@ -183,19 +189,21 @@ export const getCityById = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const city = await prismaClient.city.findUnique({
-      where: { id },
-      include: {
-        region: {
-          include: {
-            country: true,
+    const city = await withConnectionRetry(async () => {
+      return await prismaClient.city.findUnique({
+        where: { id },
+        include: {
+          region: {
+            include: {
+              country: true,
+            },
+          },
+          businesses: {
+            where: { status: 'APPROVED' },
+            take: 10,
           },
         },
-        businesses: {
-          where: { status: 'APPROVED' },
-          take: 10,
-        },
-      },
+      });
     });
 
     if (!city) {
@@ -214,19 +222,21 @@ export const getCityBySlug = async (req: Request, res: Response) => {
   try {
     const { slug } = req.params;
 
-    const city = await prismaClient.city.findUnique({
-      where: { slug },
-      include: {
-        region: {
-          include: {
-            country: true,
+    const city = await withConnectionRetry(async () => {
+      return await prismaClient.city.findUnique({
+        where: { slug },
+        include: {
+          region: {
+            include: {
+              country: true,
+            },
+          },
+          businesses: {
+            where: { status: 'APPROVED' },
+            take: 10,
           },
         },
-        businesses: {
-          where: { status: 'APPROVED' },
-          take: 10,
-        },
-      },
+      });
     });
 
     if (!city) {
@@ -249,10 +259,12 @@ export const createCountry = async (req: AuthRequest, res: Response) => {
       return sendError(res, 400, 'Name and slug are required');
     }
 
-    const existingCountry = await prismaClient.country.findFirst({
-      where: {
-        OR: [{ slug }, { name }],
-      },
+    const existingCountry = await withConnectionRetry(async () => {
+      return await prismaClient.country.findFirst({
+        where: {
+          OR: [{ slug }, { name }],
+        },
+      });
     });
 
     if (existingCountry) {
@@ -260,8 +272,10 @@ export const createCountry = async (req: AuthRequest, res: Response) => {
     }
 
     if (code) {
-      const existingCode = await prismaClient.country.findUnique({
-        where: { code },
+      const existingCode = await withConnectionRetry(async () => {
+        return await prismaClient.country.findUnique({
+          where: { code },
+        });
       });
 
       if (existingCode) {
@@ -269,8 +283,10 @@ export const createCountry = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    const country = await prismaClient.country.create({
-      data: { name, slug, code },
+    const country = await withConnectionRetry(async () => {
+      return await prismaClient.country.create({
+        data: { name, slug, code },
+      });
     });
 
     // Clear cache after creating country
@@ -292,25 +308,31 @@ export const createRegion = async (req: AuthRequest, res: Response) => {
       return sendError(res, 400, 'Name, slug, and countryId are required');
     }
 
-    const existingRegion = await prismaClient.region.findUnique({
-      where: { slug },
+    const existingRegion = await withConnectionRetry(async () => {
+      return await prismaClient.region.findUnique({
+        where: { slug },
+      });
     });
 
     if (existingRegion) {
       return sendError(res, 409, 'Region with this slug already exists');
     }
 
-    const country = await prismaClient.country.findUnique({
-      where: { id: countryId },
+    const country = await withConnectionRetry(async () => {
+      return await prismaClient.country.findUnique({
+        where: { id: countryId },
+      });
     });
 
     if (!country) {
       return sendError(res, 404, 'Country not found');
     }
 
-    const region = await prismaClient.region.create({
-      data: { name, slug, countryId },
-      include: { country: true },
+    const region = await withConnectionRetry(async () => {
+      return await prismaClient.region.create({
+        data: { name, slug, countryId },
+        include: { country: true },
+      });
     });
 
     // Clear cache after creating region
@@ -332,34 +354,40 @@ export const createCity = async (req: AuthRequest, res: Response) => {
       return sendError(res, 400, 'Name, slug, and regionId are required');
     }
 
-    const existingCity = await prismaClient.city.findUnique({
-      where: { slug },
+    const existingCity = await withConnectionRetry(async () => {
+      return await prismaClient.city.findUnique({
+        where: { slug },
+      });
     });
 
     if (existingCity) {
       return sendError(res, 409, 'City with this slug already exists');
     }
 
-    const region = await prismaClient.region.findUnique({
-      where: { id: regionId },
-      include: {
-        country: true,
-      },
+    const region = await withConnectionRetry(async () => {
+      return await prismaClient.region.findUnique({
+        where: { id: regionId },
+        include: {
+          country: true,
+        },
+      });
     });
 
     if (!region) {
       return sendError(res, 404, 'Region not found');
     }
 
-    const city = await prismaClient.city.create({
-      data: { name, slug, regionId },
-      include: {
-        region: {
-          include: {
-            country: true,
+    const city = await withConnectionRetry(async () => {
+      return await prismaClient.city.create({
+        data: { name, slug, regionId },
+        include: {
+          region: {
+            include: {
+              country: true,
+            },
           },
         },
-      },
+      });
     });
 
     // Clear cache after creating city
@@ -379,8 +407,10 @@ export const updateCity = async (req: AuthRequest, res: Response) => {
     const { name, slug, regionId } = req.body;
 
     if (regionId) {
-      const region = await prismaClient.region.findUnique({
-        where: { id: regionId },
+      const region = await withConnectionRetry(async () => {
+        return await prismaClient.region.findUnique({
+          where: { id: regionId },
+        });
       });
 
       if (!region) {
@@ -388,16 +418,18 @@ export const updateCity = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    const city = await prismaClient.city.update({
-      where: { id },
-      data: { name, slug, regionId },
-      include: {
-        region: {
-          include: {
-            country: true,
+    const city = await withConnectionRetry(async () => {
+      return await prismaClient.city.update({
+        where: { id },
+        data: { name, slug, regionId },
+        include: {
+          region: {
+            include: {
+              country: true,
+            },
           },
         },
-      },
+      });
     });
 
     // Clear cache after updating city
@@ -415,8 +447,10 @@ export const deleteCity = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
 
-    await prismaClient.city.delete({
-      where: { id },
+    await withConnectionRetry(async () => {
+      return await prismaClient.city.delete({
+        where: { id },
+      });
     });
 
     // Clear cache after deleting city
@@ -435,8 +469,10 @@ export const updateRegion = async (req: AuthRequest, res: Response) => {
     const { id } = req.params;
     const { name, slug, countryId } = req.body;
 
-    const existingRegion = await prismaClient.region.findUnique({
-      where: { id },
+    const existingRegion = await withConnectionRetry(async () => {
+      return await prismaClient.region.findUnique({
+        where: { id },
+      });
     });
 
     if (!existingRegion) {
@@ -445,8 +481,10 @@ export const updateRegion = async (req: AuthRequest, res: Response) => {
 
     // Check if slug is being changed and if it conflicts
     if (slug && slug !== existingRegion.slug) {
-      const slugConflict = await prismaClient.region.findUnique({
-        where: { slug },
+      const slugConflict = await withConnectionRetry(async () => {
+        return await prismaClient.region.findUnique({
+          where: { slug },
+        });
       });
 
       if (slugConflict) {
@@ -456,8 +494,10 @@ export const updateRegion = async (req: AuthRequest, res: Response) => {
 
     // Validate country if being changed
     if (countryId && countryId !== existingRegion.countryId) {
-      const country = await prismaClient.country.findUnique({
-        where: { id: countryId },
+      const country = await withConnectionRetry(async () => {
+        return await prismaClient.country.findUnique({
+          where: { id: countryId },
+        });
       });
 
       if (!country) {
@@ -470,10 +510,12 @@ export const updateRegion = async (req: AuthRequest, res: Response) => {
     if (slug) updateData.slug = slug;
     if (countryId) updateData.countryId = countryId;
 
-    const region = await prismaClient.region.update({
-      where: { id },
-      data: updateData,
-      include: { country: true },
+    const region = await withConnectionRetry(async () => {
+      return await prismaClient.region.update({
+        where: { id },
+        data: updateData,
+        include: { country: true },
+      });
     });
 
     // Clear cache after updating region
@@ -491,8 +533,10 @@ export const deleteRegion = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
 
-    await prismaClient.region.delete({
-      where: { id },
+    await withConnectionRetry(async () => {
+      return await prismaClient.region.delete({
+        where: { id },
+      });
     });
 
     // Clear cache after deleting region
@@ -511,8 +555,10 @@ export const updateCountry = async (req: AuthRequest, res: Response) => {
     const { id } = req.params;
     const { name, slug, code } = req.body;
 
-    const existingCountry = await prismaClient.country.findUnique({
-      where: { id },
+    const existingCountry = await withConnectionRetry(async () => {
+      return await prismaClient.country.findUnique({
+        where: { id },
+      });
     });
 
     if (!existingCountry) {
@@ -521,11 +567,13 @@ export const updateCountry = async (req: AuthRequest, res: Response) => {
 
     // Check if name is being changed and if it conflicts
     if (name && name !== existingCountry.name) {
-      const nameConflict = await prismaClient.country.findFirst({
-        where: {
-          name,
-          NOT: { id },
-        },
+      const nameConflict = await withConnectionRetry(async () => {
+        return await prismaClient.country.findFirst({
+          where: {
+            name,
+            NOT: { id },
+          },
+        });
       });
 
       if (nameConflict) {
@@ -535,8 +583,10 @@ export const updateCountry = async (req: AuthRequest, res: Response) => {
 
     // Check if slug is being changed and if it conflicts
     if (slug && slug !== existingCountry.slug) {
-      const slugConflict = await prismaClient.country.findUnique({
-        where: { slug },
+      const slugConflict = await withConnectionRetry(async () => {
+        return await prismaClient.country.findUnique({
+          where: { slug },
+        });
       });
 
       if (slugConflict) {
@@ -546,8 +596,10 @@ export const updateCountry = async (req: AuthRequest, res: Response) => {
 
     // Check if code is being changed and if it conflicts
     if (code && code !== existingCountry.code) {
-      const codeConflict = await prismaClient.country.findUnique({
-        where: { code },
+      const codeConflict = await withConnectionRetry(async () => {
+        return await prismaClient.country.findUnique({
+          where: { code },
+        });
       });
 
       if (codeConflict) {
@@ -560,9 +612,11 @@ export const updateCountry = async (req: AuthRequest, res: Response) => {
     if (slug) updateData.slug = slug;
     if (code !== undefined) updateData.code = code || null;
 
-    const country = await prismaClient.country.update({
-      where: { id },
-      data: updateData,
+    const country = await withConnectionRetry(async () => {
+      return await prismaClient.country.update({
+        where: { id },
+        data: updateData,
+      });
     });
 
     // Clear cache after updating country
@@ -580,8 +634,10 @@ export const deleteCountry = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
 
-    await prismaClient.country.delete({
-      where: { id },
+    await withConnectionRetry(async () => {
+      return await prismaClient.country.delete({
+        where: { id },
+      });
     });
 
     // Clear cache after deleting country
@@ -652,31 +708,33 @@ export const unifiedLocationSearch = async (req: Request, res: Response) => {
 
     const takeLimit = hasSearch ? undefined : 10;
 
-    const [countries, regions, cities] = await Promise.all([
-      prismaClient.country.findMany({
-        where: countryWhere,
-        orderBy: { name: 'asc' },
-        take: takeLimit,
-      }),
-      prismaClient.region.findMany({
-        where: regionWhere,
-        include: { country: true },
-        orderBy: { name: 'asc' },
-        take: takeLimit,
-      }),
-      prismaClient.city.findMany({
-        where: cityWhere,
-        include: {
-          region: {
-            include: {
-              country: true,
+    const [countries, regions, cities] = await withConnectionRetry(async () => {
+      return await Promise.all([
+        prismaClient.country.findMany({
+          where: countryWhere,
+          orderBy: { name: 'asc' },
+          take: takeLimit,
+        }),
+        prismaClient.region.findMany({
+          where: regionWhere,
+          include: { country: true },
+          orderBy: { name: 'asc' },
+          take: takeLimit,
+        }),
+        prismaClient.city.findMany({
+          where: cityWhere,
+          include: {
+            region: {
+              include: {
+                country: true,
+              },
             },
           },
-        },
-        orderBy: { name: 'asc' },
-        take: takeLimit,
-      }),
-    ]);
+          orderBy: { name: 'asc' },
+          take: takeLimit,
+        }),
+      ]);
+    });
 
     const responsePayload = {
       countries,
