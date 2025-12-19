@@ -70,51 +70,41 @@ prisma.$on('error' as never, (e: any) => {
   if (!e.message?.includes("Can't reach database server") && 
       !e.message?.includes('P1001') && 
       !e.message?.includes('P1017') &&
-      !e.message?.includes('Connection closed')) {
+      !e.message?.includes('Connection closed') &&
+      !e.message?.includes('max_connections_per_hour') &&
+      !e.message?.includes('exceeded')) {
     console.error('Prisma Client Error:', e);
   }
 });
 
-// Connection health check and retry wrapper
+// Connection retry wrapper (OPTIMIZED - no health checks to save connections)
 export const withConnectionRetry = async <T>(
   operation: () => Promise<T>,
-  retries = 2,
-  delay = 500
+  retries = 1, // Reduced from 2 to 1 to save connections
+  delay = 1000 // Increased delay to reduce retry frequency
 ): Promise<T> => {
   for (let i = 0; i <= retries; i++) {
     try {
-      // Check connection health before operation
-      try {
-        await prisma.$queryRaw`SELECT 1`;
-      } catch (connError) {
-        // Connection is dead, try to reconnect
-        if (i < retries) {
-          console.warn(`Connection check failed, attempting reconnect (attempt ${i + 1}/${retries})...`);
-          try {
-            await prisma.$disconnect();
-          } catch {
-            // Ignore disconnect errors
-          }
-          await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
-          try {
-            await prisma.$connect();
-          } catch {
-            // Will retry operation which will trigger reconnect
-          }
-        }
-      }
-      
+      // CRITICAL: Don't check connection health - it wastes connections!
+      // Prisma Client handles connection pooling internally
+      // Just execute the operation directly
       return await operation();
     } catch (error: any) {
       // If it's a connection error and we have retries left, try again
-      if (
-        (error.message?.includes("Can't reach database server") ||
-         error.code === 'P1001' ||
-         error.code === 'P1017') &&
-        i < retries
-      ) {
-        console.warn(`Database operation failed, retrying (attempt ${i + 1}/${retries})...`);
-        await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
+      // Also handle max_connections_per_hour errors
+      const isConnectionError = 
+        error.message?.includes("Can't reach database server") ||
+        error.code === 'P1001' ||
+        error.code === 'P1017' ||
+        error.code === 'P2024' ||
+        error.message?.includes('max_connections_per_hour') ||
+        error.message?.includes('exceeded') ||
+        error.message?.includes('ERROR 42000');
+      
+      if (isConnectionError && i < retries) {
+        console.warn(`Database operation failed, retrying (attempt ${i + 1}/${retries})...`, error.message?.substring(0, 100));
+        // Exponential backoff
+        await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
         continue;
       }
       throw error;

@@ -7,10 +7,16 @@ const ENABLE_CRON_JOBS = process.env.ENABLE_CRON_JOBS === 'true';
 
 const startServer = async () => {
   try {
-    // Test database connection with a simple query
-    await prisma.$connect();
-    await prisma.$queryRaw`SELECT 1`;
-    console.log('✅ Database connected successfully');
+    // NOTE: Don't call $connect() explicitly - Prisma connects lazily
+    // Calling it here wastes a connection in serverless environments
+    // Prisma Client will connect automatically on first query
+    // Just test with a simple query (only for non-serverless)
+    if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+      await prisma.$queryRaw`SELECT 1`;
+      console.log('✅ Database connected successfully');
+    } else {
+      console.log('✅ Server starting (Prisma will connect on first query in serverless)');
+    }
     
     // Log connection pool info if available
     const dbUrl = process.env.DATABASE_URL || '';
