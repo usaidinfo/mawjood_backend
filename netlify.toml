@@ -1,0 +1,25 @@
+[build]
+  command = "npm install && npx prisma generate && npm run build"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "18"
+
+# Redirect all API routes to the serverless function
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/server/:splat"
+  status = 200
+
+# Health check
+[[redirects]]
+  from = "/health"
+  to = "/.netlify/functions/server/health"
+  status = 200
+
+# Root redirect (optional - for API root)
+[[redirects]]
+  from = "/"
+  to = "/.netlify/functions/server/"
+  status = 200
+

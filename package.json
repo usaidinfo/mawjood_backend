@@ -34,7 +34,8 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "serverless-http": "^3.2.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
