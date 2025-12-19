@@ -571,7 +571,7 @@ export const handlePayTabsRedirect = async (req: Request, res: Response) => {
 
   if (error || !paymentId) {
     console.error('❌ [REDIRECT] Error or missing paymentId:', { error, paymentId });
-    const failedUrl = `${frontendBase}/dashboard/payments/failed`;
+    const failedUrl = `${frontendBase}/payments/failed`;
     console.log('🔄 [REDIRECT] Redirecting to failed page (no paymentId):', failedUrl);
     console.log('═══════════════════════════════════════════════════════');
     return res.redirect(302, failedUrl);
@@ -586,7 +586,7 @@ export const handlePayTabsRedirect = async (req: Request, res: Response) => {
 
     if (!payment) {
       console.error('❌ [REDIRECT] Payment not found in database for ID:', paymentId);
-      const failedUrl = `${frontendBase}/dashboard/payments/failed`;
+      const failedUrl = `${frontendBase}/payments/failed`;
       console.log('🔄 [REDIRECT] Redirecting to failed page (payment not found):', failedUrl);
       console.log('═══════════════════════════════════════════════════════');
       return res.redirect(302, failedUrl);
@@ -653,13 +653,13 @@ export const handlePayTabsRedirect = async (req: Request, res: Response) => {
     let redirectUrl: string;
     
     if (finalPayment.status === 'COMPLETED') {
-      redirectUrl = `${frontendBase}/dashboard/payments/success?paymentId=${paymentId}&tranRef=${tranRef || finalPayment.transactionId || ''}`;
+      redirectUrl = `${frontendBase}/payments/success?paymentId=${paymentId}&tranRef=${tranRef || finalPayment.transactionId || ''}`;
       console.log('✅ [REDIRECT] Payment status is COMPLETED, redirecting to success page');
     } else if (finalPayment.status === 'FAILED') {
-      redirectUrl = `${frontendBase}/dashboard/payments/failed?paymentId=${paymentId}&tranRef=${tranRef || finalPayment.transactionId || ''}`;
+      redirectUrl = `${frontendBase}/payments/failed?paymentId=${paymentId}&tranRef=${tranRef || finalPayment.transactionId || ''}`;
       console.log('❌ [REDIRECT] Payment status is FAILED, redirecting to failed page');
     } else {
-      redirectUrl = `${frontendBase}/dashboard/payments/pending?paymentId=${paymentId}&tranRef=${tranRef || finalPayment.transactionId || ''}`;
+      redirectUrl = `${frontendBase}/payments/pending?paymentId=${paymentId}&tranRef=${tranRef || finalPayment.transactionId || ''}`;
       console.log('⏳ [REDIRECT] Payment status is', finalPayment.status, ', redirecting to pending page');
     }
 
@@ -680,7 +680,7 @@ export const handlePayTabsRedirect = async (req: Request, res: Response) => {
     const duration = Date.now() - startTime;
     console.error('❌ [REDIRECT] Error in redirect handler after', duration, 'ms:', error);
     console.error('❌ [REDIRECT] Error stack:', error?.stack);
-    const failedUrl = `${frontendBase}/dashboard/payments/failed`;
+    const failedUrl = `${frontendBase}/payments/failed`;
     console.log('🔄 [REDIRECT] Redirecting to failed page (exception):', failedUrl);
     console.log('═══════════════════════════════════════════════════════');
     return res.redirect(302, failedUrl);
