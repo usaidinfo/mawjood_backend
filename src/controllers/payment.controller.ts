@@ -218,10 +218,19 @@ export const createPayment = async (req: AuthRequest, res: Response) => {
 
 // PayTabs Callback Handler
 export const handlePayTabsCallback = async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  console.log('═══════════════════════════════════════════════════════');
+  console.log('🔄 [CALLBACK] PayTabs Callback Handler STARTED');
+  console.log('🕐 [CALLBACK] Timestamp:', new Date().toISOString());
+  console.log('📥 [CALLBACK] Method:', req.method);
+  console.log('📥 [CALLBACK] Headers:', JSON.stringify(req.headers, null, 2));
+  console.log('📥 [CALLBACK] Query:', JSON.stringify(req.query, null, 2));
+  console.log('📥 [CALLBACK] Body:', JSON.stringify(req.body, null, 2));
+  
   try {
     const callbackData = req.body;
     
-    console.log('PayTabs Callback received:', JSON.stringify(callbackData, null, 2));
+    console.log('📦 [CALLBACK] Parsed callback data:', JSON.stringify(callbackData, null, 2));
 
     const {
       tran_ref,
@@ -230,20 +239,35 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
       cart_amount,
       cart_currency,
     } = callbackData;
+    
+    console.log('🔍 [CALLBACK] Extracted values:', {
+      tran_ref,
+      cart_id,
+      payment_result: payment_result ? JSON.stringify(payment_result) : null,
+      cart_amount,
+      cart_currency,
+    });
 
     if (!tran_ref || !cart_id) {
+      console.error('❌ [CALLBACK] Missing required fields:', { tran_ref, cart_id });
       return sendError(res, 400, 'Invalid callback data: missing tran_ref or cart_id');
     }
 
+    console.log('✅ [CALLBACK] Required fields present, proceeding with verification...');
+
     // Verify payment with PayTabs API
+    console.log('🔐 [CALLBACK] Verifying payment with PayTabs API for tran_ref:', tran_ref);
     const verificationResult = await paytabsService.verifyPayment(tran_ref);
+    console.log('✅ [CALLBACK] PayTabs verification result:', JSON.stringify(verificationResult, null, 2));
     
     // Parse payment status
     const paymentStatus = paytabsService.parsePaymentStatus(
       verificationResult.payment_result?.response_status || payment_result?.response_status
     );
+    console.log('📊 [CALLBACK] Parsed payment status:', paymentStatus);
 
     // Find the payment in our database using cart_id (which is our payment ID)
+    console.log('🔍 [CALLBACK] Looking up payment in database with cart_id:', cart_id);
     const payment = await prisma.payment.findUnique({
       where: { id: cart_id },
       include: {
@@ -266,17 +290,27 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
     });
 
     if (!payment) {
-      console.error(`Payment not found for cart_id: ${cart_id}`);
+      console.error(`❌ [CALLBACK] Payment not found for cart_id: ${cart_id}`);
       return sendError(res, 404, 'Payment not found');
     }
+    
+    console.log('✅ [CALLBACK] Payment found:', {
+      id: payment.id,
+      currentStatus: payment.status,
+      amount: payment.amount,
+      currency: payment.currency,
+      businessId: payment.businessId,
+    });
 
     // IDEMPOTENCY CHECK: If payment is already COMPLETED, skip processing
     // PayTabs can and will retry callbacks, so we must guard against duplicate processing
     if (payment.status === 'COMPLETED') {
-      console.log(`Payment ${payment.id} already processed`);
+      console.log(`⚠️ [CALLBACK] Payment ${payment.id} already processed (status: ${payment.status}), skipping`);
       return sendSuccess(res, 200, 'Already processed');
     }
 
+    console.log(`🔄 [CALLBACK] Updating payment ${payment.id} from status "${payment.status}" to "${paymentStatus}"`);
+    
     // Update payment record
     const updatedPayment = await prisma.payment.update({
       where: { id: payment.id },
@@ -284,6 +318,12 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
         status: paymentStatus,
         transactionId: tran_ref,
       },
+    });
+    
+    console.log('✅ [CALLBACK] Payment updated successfully:', {
+      id: updatedPayment.id,
+      newStatus: updatedPayment.status,
+      transactionId: updatedPayment.transactionId,
     });
 
     // Create notification based on payment status
@@ -404,13 +444,30 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
       }
     }
 
+    const duration = Date.now() - startTime;
+    console.log(`✅ [CALLBACK] Payment callback processed successfully in ${duration}ms`);
+    console.log('📤 [CALLBACK] Sending success response:', {
+      paymentId: payment.id,
+      status: paymentStatus,
+      transactionRef: tran_ref,
+    });
+    console.log('═══════════════════════════════════════════════════════');
+    
     return sendSuccess(res, 200, 'Payment callback processed successfully', {
       paymentId: payment.id,
       status: paymentStatus,
       transactionRef: tran_ref,
     });
-  } catch (error) {
-    console.error('PayTabs callback error:', error);
+  } catch (error: any) {
+    const duration = Date.now() - startTime;
+    console.error('❌ [CALLBACK] PayTabs callback error after', duration, 'ms:', error);
+    console.error('❌ [CALLBACK] Error stack:', error?.stack);
+    console.error('❌ [CALLBACK] Error details:', JSON.stringify({
+      message: error?.message,
+      response: error?.response?.data,
+      status: error?.response?.status,
+    }, null, 2));
+    console.log('═══════════════════════════════════════════════════════');
     return sendError(res, 500, 'Failed to process payment callback', error);
   }
 };
@@ -419,11 +476,19 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
 // IMPORTANT: Do NOT verify, do NOT update DB, do NOT activate anything here
 // Only redirect internally to the intermediate redirect endpoint
 export const handlePayTabsReturn = async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  console.log('═══════════════════════════════════════════════════════');
+  console.log('🔄 [RETURN] PayTabs Return Handler STARTED');
+  console.log('🕐 [RETURN] Timestamp:', new Date().toISOString());
+  console.log('📥 [RETURN] Method:', req.method);
+  console.log('📥 [RETURN] URL:', req.url);
+  console.log('📥 [RETURN] Headers:', JSON.stringify(req.headers, null, 2));
+  console.log('📥 [RETURN] Query params:', JSON.stringify(req.query, null, 2));
+  console.log('📥 [RETURN] Body:', JSON.stringify(req.body, null, 2));
+  console.log('📥 [RETURN] Body type:', typeof req.body);
+  console.log('📥 [RETURN] Body keys:', req.body ? Object.keys(req.body) : 'no body');
+  
   try {
-    console.log('PayTabs Return Handler - Method:', req.method);
-    console.log('PayTabs Return Handler - Query:', req.query);
-    console.log('PayTabs Return Handler - Body:', req.body);
-
     const tranRef =
       (req.body?.tranRef as string) ||
       (req.body?.tran_ref as string) ||
@@ -436,23 +501,37 @@ export const handlePayTabsReturn = async (req: Request, res: Response) => {
       (req.query?.cartId as string) ||
       (req.query?.cart_id as string);
 
+    console.log('🔍 [RETURN] Extracted values:', {
+      tranRef,
+      cartId,
+      sources: {
+        tranRefFromBody: req.body?.tranRef || req.body?.tran_ref,
+        tranRefFromQuery: req.query?.tranRef || req.query?.tran_ref,
+        cartIdFromBody: req.body?.cartId || req.body?.cart_id,
+        cartIdFromQuery: req.query?.cartId || req.query?.cart_id,
+      },
+    });
+
     if (!tranRef || !cartId) {
-      console.error('Return handler missing parameters', { tranRef, cartId });
+      console.error('❌ [RETURN] Missing required parameters:', { tranRef, cartId });
+      console.log('═══════════════════════════════════════════════════════');
       return res.redirect(303, `/api/payments/paytabs/redirect?error=invalid_params`);
     }
 
-    console.log('Return handler received:', { tranRef, cartId });
+    console.log('✅ [RETURN] All parameters present, proceeding with redirect...');
 
-    // IMPORTANT
-    // Do NOT verify, do NOT update DB, do NOT activate anything here
-    // Only redirect internally
 
-    return res.redirect(
-      303,
-      `/api/payments/paytabs/redirect?paymentId=${cartId}&tranRef=${tranRef}`
-    );
-  } catch (error) {
-    console.error('PayTabs return error:', error);
+
+    const redirectUrl = `/api/payments/paytabs/redirect?paymentId=${cartId}&tranRef=${tranRef}`;
+    console.log('🔄 [RETURN] Redirecting to:', redirectUrl);
+    console.log('═══════════════════════════════════════════════════════');
+
+    return res.redirect(303, redirectUrl);
+  } catch (error: any) {
+    const duration = Date.now() - startTime;
+    console.error('❌ [RETURN] PayTabs return error after', duration, 'ms:', error);
+    console.error('❌ [RETURN] Error stack:', error?.stack);
+    console.log('═══════════════════════════════════════════════════════');
     return res.redirect(303, `/api/payments/paytabs/redirect?error=exception`);
   }
 };
@@ -461,38 +540,151 @@ export const handlePayTabsReturn = async (req: Request, res: Response) => {
 // This endpoint reads payment status from DB and redirects to frontend.
 // This solves cross-origin POST redirect issues by using GET redirect.
 export const handlePayTabsRedirect = async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  console.log('═══════════════════════════════════════════════════════');
+  console.log('🔄 [REDIRECT] PayTabs Redirect Handler STARTED');
+  console.log('🕐 [REDIRECT] Timestamp:', new Date().toISOString());
+  console.log('📥 [REDIRECT] Method:', req.method);
+  console.log('📥 [REDIRECT] URL:', req.url);
+  console.log('📥 [REDIRECT] Query params:', JSON.stringify(req.query, null, 2));
+  console.log('📥 [REDIRECT] Headers:', JSON.stringify(req.headers, null, 2));
+  
   const { paymentId, tranRef, error } = req.query;
+  
+  console.log('🔍 [REDIRECT] Extracted query params:', {
+    paymentId,
+    tranRef,
+    error,
+  });
 
   const frontendBase =
     process.env.FRONTEND_URL || 'https://mawjoodfrontend.vercel.app';
+  
+  console.log('🌐 [REDIRECT] Frontend base URL:', frontendBase);
+  console.log('🌐 [REDIRECT] FRONTEND_URL env var:', process.env.FRONTEND_URL || 'NOT SET (using default)');
+  
+  if (!process.env.FRONTEND_URL) {
+    console.warn('⚠️ [REDIRECT] WARNING: FRONTEND_URL environment variable is not set!');
+    console.warn('⚠️ [REDIRECT] Using default:', frontendBase);
+    console.warn('⚠️ [REDIRECT] This may cause redirect issues. Please set FRONTEND_URL in your environment.');
+  }
 
   if (error || !paymentId) {
-    return res.redirect(`${frontendBase}/dashboard/payments/failed`);
+    console.error('❌ [REDIRECT] Error or missing paymentId:', { error, paymentId });
+    const failedUrl = `${frontendBase}/dashboard/payments/failed`;
+    console.log('🔄 [REDIRECT] Redirecting to failed page (no paymentId):', failedUrl);
+    console.log('═══════════════════════════════════════════════════════');
+    return res.redirect(302, failedUrl);
   }
 
-  const payment = await prisma.payment.findUnique({
-    where: { id: paymentId as string },
-  });
+  console.log('🔍 [REDIRECT] Looking up payment in database with ID:', paymentId);
+  
+  try {
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId as string },
+    });
 
-  if (!payment) {
-    return res.redirect(`${frontendBase}/dashboard/payments/failed`);
+    if (!payment) {
+      console.error('❌ [REDIRECT] Payment not found in database for ID:', paymentId);
+      const failedUrl = `${frontendBase}/dashboard/payments/failed`;
+      console.log('🔄 [REDIRECT] Redirecting to failed page (payment not found):', failedUrl);
+      console.log('═══════════════════════════════════════════════════════');
+      return res.redirect(302, failedUrl);
+    }
+
+    console.log('✅ [REDIRECT] Payment found:', {
+      id: payment.id,
+      status: payment.status,
+      amount: payment.amount,
+      currency: payment.currency,
+      transactionId: payment.transactionId,
+      createdAt: payment.createdAt,
+      updatedAt: payment.updatedAt,
+    });
+
+    // If payment is still PENDING, callback might not have processed yet
+    // Wait a bit and check again, or verify with PayTabs directly
+    let finalPayment = payment;
+    if (payment.status === 'PENDING' && tranRef) {
+      console.log('⏳ [REDIRECT] Payment status is PENDING, waiting for callback to process...');
+      
+      // Wait up to 3 seconds, checking every 500ms for updated status
+      for (let i = 0; i < 6; i++) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        const refreshedPayment = await prisma.payment.findUnique({
+          where: { id: paymentId as string },
+        });
+        
+        if (refreshedPayment && refreshedPayment.status !== 'PENDING') {
+          console.log(`✅ [REDIRECT] Payment status updated after ${(i + 1) * 500}ms:`, refreshedPayment.status);
+          finalPayment = refreshedPayment;
+          break;
+        }
+      }
+      
+      // If still PENDING, try to verify with PayTabs API
+      if (finalPayment.status === 'PENDING' && tranRef) {
+        console.log('🔐 [REDIRECT] Still PENDING, verifying with PayTabs API...');
+        try {
+          const verificationResult = await paytabsService.verifyPayment(tranRef as string);
+          const paymentStatus = paytabsService.parsePaymentStatus(
+            verificationResult.payment_result?.response_status
+          );
+          
+          if (paymentStatus !== 'PENDING') {
+            console.log('✅ [REDIRECT] PayTabs API returned status:', paymentStatus);
+            // Update payment in database
+            finalPayment = await prisma.payment.update({
+              where: { id: paymentId as string },
+              data: {
+                status: paymentStatus,
+                transactionId: tranRef as string,
+              },
+            });
+            console.log('✅ [REDIRECT] Payment updated in database with status:', paymentStatus);
+          }
+        } catch (verifyError: any) {
+          console.error('❌ [REDIRECT] Error verifying with PayTabs:', verifyError?.message);
+        }
+      }
+    }
+
+    let redirectUrl: string;
+    
+    if (finalPayment.status === 'COMPLETED') {
+      redirectUrl = `${frontendBase}/dashboard/payments/success?paymentId=${paymentId}&tranRef=${tranRef || finalPayment.transactionId || ''}`;
+      console.log('✅ [REDIRECT] Payment status is COMPLETED, redirecting to success page');
+    } else if (finalPayment.status === 'FAILED') {
+      redirectUrl = `${frontendBase}/dashboard/payments/failed?paymentId=${paymentId}&tranRef=${tranRef || finalPayment.transactionId || ''}`;
+      console.log('❌ [REDIRECT] Payment status is FAILED, redirecting to failed page');
+    } else {
+      redirectUrl = `${frontendBase}/dashboard/payments/pending?paymentId=${paymentId}&tranRef=${tranRef || finalPayment.transactionId || ''}`;
+      console.log('⏳ [REDIRECT] Payment status is', finalPayment.status, ', redirecting to pending page');
+    }
+
+    const duration = Date.now() - startTime;
+    console.log('🔄 [REDIRECT] Final redirect URL:', redirectUrl);
+    console.log('🔄 [REDIRECT] Redirect URL components:', {
+      frontendBase,
+      path: redirectUrl.replace(frontendBase, ''),
+      fullUrl: redirectUrl,
+    });
+    console.log(`✅ [REDIRECT] Redirect handler completed in ${duration}ms`);
+    console.log('📤 [REDIRECT] Sending 302 redirect response with Location header...');
+    console.log('═══════════════════════════════════════════════════════');
+    
+    // Use 302 (temporary redirect) - browsers will follow this
+    return res.redirect(302, redirectUrl);
+  } catch (error: any) {
+    const duration = Date.now() - startTime;
+    console.error('❌ [REDIRECT] Error in redirect handler after', duration, 'ms:', error);
+    console.error('❌ [REDIRECT] Error stack:', error?.stack);
+    const failedUrl = `${frontendBase}/dashboard/payments/failed`;
+    console.log('🔄 [REDIRECT] Redirecting to failed page (exception):', failedUrl);
+    console.log('═══════════════════════════════════════════════════════');
+    return res.redirect(302, failedUrl);
   }
-
-  if (payment.status === 'COMPLETED') {
-    return res.redirect(
-      `${frontendBase}/dashboard/payments/success?paymentId=${paymentId}&tranRef=${tranRef}`
-    );
-  }
-
-  if (payment.status === 'FAILED') {
-    return res.redirect(
-      `${frontendBase}/dashboard/payments/failed?paymentId=${paymentId}&tranRef=${tranRef}`
-    );
-  }
-
-  return res.redirect(
-    `${frontendBase}/dashboard/payments/pending?paymentId=${paymentId}&tranRef=${tranRef}`
-  );
 };
 
 // Update payment status (for webhook/callback from PayTabs)

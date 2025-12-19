@@ -8,6 +8,7 @@ import {
   updateBlog,
   deleteBlog,
   getAllBlogsAdmin,
+  publishScheduledBlogs,
 } from '../controllers/blog.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 import { upload } from '../middleware/upload.middleware';
@@ -17,6 +18,9 @@ const router = Router();
 // Public routes
 router.get('/', getAllBlogs);
 router.get('/slug/:slug', getBlogBySlug);
+
+// Public routes for cron jobs
+router.get('/publish/scheduled', publishScheduledBlogs);
 
 // Admin routes
 router.get('/admin/all', authenticate, authorize('ADMIN'), getAllBlogsAdmin);

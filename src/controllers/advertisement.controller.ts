@@ -255,6 +255,114 @@ export const getAdvertisementById = async (req: Request, res: Response) => {
   }
 };
 
+// Sync advertisement active status based on start/end dates (Cron job endpoint)
+export const syncAdvertisementStatus = async (_req: Request, res: Response) => {
+  try {
+    const now = new Date();
+    
+    // Find advertisements that should be active but aren't (start date has passed or null, end date hasn't passed or null)
+    const shouldBeActive = await prismaClient.advertisement.findMany({
+      where: {
+        isActive: false,
+        AND: [
+          {
+            OR: [
+              { startsAt: null },
+              { startsAt: { lte: now } },
+            ],
+          },
+          {
+            OR: [
+              { endsAt: null },
+              { endsAt: { gte: now } },
+            ],
+          },
+        ],
+      },
+      select: {
+        id: true,
+        title: true,
+      },
+    });
+
+    // Find advertisements that should be inactive but aren't (end date has passed or start date hasn't arrived)
+    const shouldBeInactive = await prismaClient.advertisement.findMany({
+      where: {
+        isActive: true,
+        OR: [
+          {
+            AND: [
+              { startsAt: { not: null } },
+              { startsAt: { gt: now } },
+            ],
+          },
+          {
+            AND: [
+              { endsAt: { not: null } },
+              { endsAt: { lt: now } },
+            ],
+          },
+        ],
+      },
+      select: {
+        id: true,
+        title: true,
+      },
+    });
+
+    const updates: Promise<any>[] = [];
+
+    // Activate advertisements that should be active
+    if (shouldBeActive.length > 0) {
+      updates.push(
+        prismaClient.advertisement.updateMany({
+          where: {
+            id: { in: shouldBeActive.map((ad) => ad.id) },
+          },
+          data: {
+            isActive: true,
+          },
+        })
+      );
+      console.log(`✅ Activating ${shouldBeActive.length} advertisement(s)`);
+    }
+
+    // Deactivate advertisements that should be inactive
+    if (shouldBeInactive.length > 0) {
+      updates.push(
+        prismaClient.advertisement.updateMany({
+          where: {
+            id: { in: shouldBeInactive.map((ad) => ad.id) },
+          },
+          data: {
+            isActive: false,
+          },
+        })
+      );
+      console.log(`⏸️ Deactivating ${shouldBeInactive.length} advertisement(s)`);
+    }
+
+    if (updates.length > 0) {
+      await Promise.all(updates);
+    }
+
+    const totalProcessed = shouldBeActive.length + shouldBeInactive.length;
+
+    if (totalProcessed === 0) {
+      return sendSuccess(res, 200, 'No advertisements to sync', { processed: 0 });
+    }
+
+    return sendSuccess(res, 200, 'Advertisement status synced successfully', {
+      processed: totalProcessed,
+      activated: shouldBeActive.length,
+      deactivated: shouldBeInactive.length,
+    });
+  } catch (error) {
+    console.error('Sync advertisement status error:', error);
+    return sendError(res, 500, 'Failed to sync advertisement status', error);
+  }
+};
+
 export const getAdvertisements = async (req: Request, res: Response) => {
   try {
     const {

@@ -6,10 +6,14 @@ import {
   getAdvertisementForDisplay,
   getAdvertisements,
   updateAdvertisement,
+  syncAdvertisementStatus,
 } from '../controllers/advertisement.controller';
 import { upload } from '../middleware/upload.middleware';
 
 const router = Router();
+
+// Public routes for cron jobs
+router.get('/sync/status', syncAdvertisementStatus);
 
 router.get('/display', getAdvertisementForDisplay);
 router.get('/', getAdvertisements);

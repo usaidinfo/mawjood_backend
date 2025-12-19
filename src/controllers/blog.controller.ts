@@ -672,3 +672,75 @@ export const getAllBlogsAdmin = async (req: Request, res: Response) => {
     return sendError(res, 500, 'Failed to fetch blogs', error);
   }
 };
+
+// Publish scheduled blogs (Cron job endpoint)
+export const publishScheduledBlogs = async (_req: Request, res: Response) => {
+  try {
+    const now = new Date();
+    
+    // Fetch all published blogs (scheduled blogs have published=true)
+    const blogs = await prismaClient.blog.findMany({
+      where: {
+        published: true,
+      },
+      select: {
+        id: true,
+        tags: true,
+        title: true,
+      },
+    });
+
+    const blogsToPublish: any[] = [];
+
+    // Filter blogs that are SCHEDULED and their scheduledAt time has passed
+    for (const blog of blogs) {
+      const blogWithStatus = attachBlogStatus(blog);
+      
+      if (blogWithStatus.status === 'SCHEDULED' && blogWithStatus.scheduledAt) {
+        const scheduledDate = new Date(blogWithStatus.scheduledAt);
+        if (scheduledDate <= now) {
+          blogsToPublish.push(blog);
+        }
+      }
+    }
+
+    if (blogsToPublish.length === 0) {
+      return sendSuccess(res, 200, 'No scheduled blogs to publish', { processed: 0 });
+    }
+
+    // Update each blog: change status to PUBLISHED and remove scheduledAt from tags
+    const updates = blogsToPublish.map((blog) => {
+      const tags = blog.tags as any;
+      let updatedTags: any = {};
+      
+      // Preserve existing tags structure
+      if (tags && typeof tags === 'object' && !Array.isArray(tags)) {
+        updatedTags = { ...tags };
+      } else if (Array.isArray(tags)) {
+        updatedTags = { tags };
+      }
+      
+      updatedTags.status = 'PUBLISHED';
+      delete updatedTags.scheduledAt;
+
+      return prismaClient.blog.update({
+        where: { id: blog.id },
+        data: {
+          tags: updatedTags,
+        },
+      });
+    });
+
+    await Promise.all(updates);
+
+    console.log(`✅ Published ${blogsToPublish.length} scheduled blog(s)`);
+
+    return sendSuccess(res, 200, 'Scheduled blogs published successfully', {
+      processed: blogsToPublish.length,
+      blogTitles: blogsToPublish.map((b) => b.title),
+    });
+  } catch (error) {
+    console.error('Publish scheduled blogs error:', error);
+    return sendError(res, 500, 'Failed to publish scheduled blogs', error);
+  }
+};
