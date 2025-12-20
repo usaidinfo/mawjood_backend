@@ -9,22 +9,44 @@ import { paytabsConfig } from '../config/paytabs';
 export const getUserPayments = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.userId;
+    const { page = '1', limit = '20', businessId } = req.query;
+    const skip = (parseInt(page as string, 10) - 1) * parseInt(limit as string, 10);
 
-    const payments = await prisma.payment.findMany({
-      where: { userId },
-      include: {
-        business: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
+    const where: any = { userId };
+    
+    // Optionally filter by businessId
+    if (businessId) {
+      where.businessId = businessId as string;
+    }
+
+    const [payments, total] = await Promise.all([
+      prisma.payment.findMany({
+        where,
+        include: {
+          business: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+            },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: parseInt(limit as string, 10),
+      }),
+      prisma.payment.count({ where }),
+    ]);
 
-    return sendSuccess(res, 200, 'Payments fetched successfully', payments);
+    return sendSuccess(res, 200, 'Payments fetched successfully', {
+      payments,
+      pagination: {
+        page: parseInt(page as string, 10),
+        limit: parseInt(limit as string, 10),
+        total,
+        pages: Math.ceil(total / parseInt(limit as string, 10)),
+      },
+    });
   } catch (error) {
     console.error('Get payments error:', error);
     return sendError(res, 500, 'Failed to fetch payments', error);
@@ -335,7 +357,7 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
             type: 'PAYMENT_SUCCESS',
             title: 'Payment Successful! ✅',
             message: `Your payment of ${payment.amount} ${payment.currency} for "${payment.business?.name || 'business'}" has been completed successfully. Transaction ID: ${tran_ref}`,
-            link: `/dashboard/payments?paymentId=${payment.id}`,
+            link: `/payments/success?paymentId=${payment.id}&tranRef=${tran_ref}`,
           },
         });
       } else if (paymentStatus === 'FAILED') {
@@ -345,7 +367,7 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
             type: 'PAYMENT_FAILED',
             title: 'Payment Failed ❌',
             message: `Your payment of ${payment.amount} ${payment.currency} for "${payment.business?.name || 'business'}" has failed. Please try again or contact support if the issue persists.`,
-            link: `/dashboard/payments?paymentId=${payment.id}`,
+            link: `/payments/failed?paymentId=${payment.id}&tranRef=${tran_ref}`,
           },
         });
       }
@@ -740,7 +762,7 @@ export const updatePaymentStatus = async (req: Request, res: Response) => {
               type: 'PAYMENT_SUCCESS',
               title: 'Payment Successful! ✅',
               message: `Your payment of ${existingPayment.amount} ${existingPayment.currency} for "${existingPayment.business?.name || 'business'}" has been completed successfully.${transactionId ? ` Transaction ID: ${transactionId}` : ''}`,
-              link: `/dashboard/payments?paymentId=${paymentId}`,
+              link: `/payments/success?paymentId=${paymentId}${transactionId ? `&tranRef=${transactionId}` : ''}`,
             },
           });
         } else if (status === 'FAILED') {
@@ -750,7 +772,7 @@ export const updatePaymentStatus = async (req: Request, res: Response) => {
               type: 'PAYMENT_FAILED',
               title: 'Payment Failed ❌',
               message: `Your payment of ${existingPayment.amount} ${existingPayment.currency} for "${existingPayment.business?.name || 'business'}" has failed. Please try again or contact support if the issue persists.`,
-              link: `/dashboard/payments?paymentId=${paymentId}`,
+              link: `/payments/failed?paymentId=${paymentId}${transactionId ? `&tranRef=${transactionId}` : ''}`,
             },
           });
         }
