@@ -465,14 +465,8 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
     const { firstName, lastName, email, phone } = req.body;
 
     // Validate required fields
-    if (!firstName || !lastName || !email || !phone) {
-      return sendError(res, 400, 'First name, last name, email, and phone are required');
-    }
-
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return sendError(res, 400, 'Invalid email format');
+    if (!firstName || !lastName) {
+      return sendError(res, 400, 'First name and last name are required');
     }
 
     // Check if user exists
@@ -484,29 +478,67 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
       return sendError(res, 404, 'User not found');
     }
 
-    // Check if email is already taken by another user
-    if (email !== existingUser.email) {
-      const emailExists = await prisma.user.findFirst({
-        where: {
-          email,
-          id: { not: id },
-        },
-      });
+    const updateData: any = {
+      firstName,
+      lastName,
+    };
 
-      if (emailExists) {
-        return sendError(res, 409, 'Email is already taken by another user');
+    // Handle email update
+    if (email !== undefined) {
+      if (email && email.trim()) {
+        // Validate email format if provided
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email.trim())) {
+          return sendError(res, 400, 'Invalid email format');
+        }
+
+        // Check if email is already taken by another user
+        if (email.trim() !== existingUser.email) {
+          const emailExists = await prisma.user.findFirst({
+            where: {
+              email: email.trim(),
+              id: { not: id },
+            },
+          });
+
+          if (emailExists) {
+            return sendError(res, 409, 'Email is already taken by another user');
+          }
+        }
+        updateData.email = email.trim();
+      } else {
+        // Allow setting email to null
+        updateData.email = null;
+      }
+    }
+
+    // Handle phone update
+    if (phone !== undefined) {
+      if (phone && phone.trim()) {
+        // Check if phone is already taken by another user
+        if (phone.trim() !== existingUser.phone) {
+          const phoneExists = await prisma.user.findFirst({
+            where: {
+              phone: phone.trim(),
+              id: { not: id },
+            },
+          });
+
+          if (phoneExists) {
+            return sendError(res, 409, 'Phone number is already taken by another user');
+          }
+        }
+        updateData.phone = phone.trim();
+      } else {
+        // Allow setting phone to null
+        updateData.phone = null;
       }
     }
 
     // Update user
     const user = await prisma.user.update({
       where: { id },
-      data: {
-        firstName,
-        lastName,
-        email,
-        phone,
-      },
+      data: updateData,
       select: {
         id: true,
         email: true,

@@ -257,7 +257,7 @@ export const verifyEmailOTP = async (req: Request, res: Response) => {
       const user = await prisma.user.create({
         data: {
           email: emailLower,
-          phone: registrationData.phone || `EMAIL_${Date.now()}_${Math.random().toString(36).slice(-6)}`,
+          phone: registrationData.phone || null,
           password: '', // Empty password as per requirement
           firstName: registrationData.firstName || '',
           lastName: registrationData.lastName || '',
@@ -368,7 +368,7 @@ export const verifyPhoneOTP = async (req: Request, res: Response) => {
       // Create user with empty password
       const user = await prisma.user.create({
         data: {
-          email: registrationData.email || `PHONE_${Date.now()}_${Math.random().toString(36).slice(-6)}@temp.com`,
+          email: registrationData.email ? registrationData.email.toLowerCase() : null,
           phone,
           password: '', // Empty password as per requirement
           firstName: registrationData.firstName || '',
@@ -488,19 +488,17 @@ export const socialLogin = async (req: Request, res: Response) => {
       return sendError(res, 400, 'Unsupported social provider');
     }
 
-    const email = profile.email?.toLowerCase();
+    const email = profile.email?.toLowerCase() || null;
 
-    if (!email) {
-      return sendError(
-        res,
-        400,
-        'Email address was not provided by the social provider. Please use another login method.',
-      );
-    }
+    // Note: Email can be null for social login, but we still allow registration
+    // Users can add email/phone later in their profile settings
 
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
+    // For social login, try to find user by email if provided, otherwise skip
+    const existingUser = email 
+      ? await prisma.user.findUnique({
+          where: { email },
+        })
+      : null;
 
     let user: SelectedUser;
     let usedPlaceholderPhone = false;
@@ -517,33 +515,28 @@ export const socialLogin = async (req: Request, res: Response) => {
           lastName: existingUser.lastName || profile.lastName || '',
           avatar: profile.avatar ?? existingUser.avatar,
           emailVerified: profile.emailVerified ?? true,
+          // Update email if it was null and now we have it
+          ...(email && !existingUser.email ? { email } : {}),
         },
         select: baseUserSelect,
       });
     } else {
-      // New user registration - phone is optional, generate placeholder if not provided
-      let resolvedPhone: string;
-      
+      // New user registration - phone is optional
       if (phone) {
         // If phone is provided, check if it already exists
         const phoneExists = await prisma.user.findUnique({ where: { phone } });
         if (phoneExists) {
           return sendError(res, 409, 'Phone number is already associated with another account');
         }
-        resolvedPhone = phone;
         usedPlaceholderPhone = false;
       } else {
-        // Generate a placeholder phone if not provided
-        resolvedPhone = `SOCIAL_${provider}_${Date.now()}_${Math.random()
-          .toString(36)
-          .slice(-6)}`;
         usedPlaceholderPhone = true;
       }
 
       user = await prisma.user.create({
         data: {
           email,
-          phone: resolvedPhone,
+          phone: phone || null,
           password: '', // Empty password as per requirement
           firstName: profile.firstName || '',
           lastName: profile.lastName || '',

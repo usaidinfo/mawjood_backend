@@ -136,11 +136,14 @@ export const createEnquiry = async (req: AuthRequest, res: Response) => {
         </html>
       `;
 
-      await emailService.sendEmail({
-        to: business.user.email,
-        subject: `New Enquiry for ${business.name} - Mawjood`,
-        html,
-      });
+      // Only send email if business owner has an email
+      if (business.user.email) {
+        await emailService.sendEmail({
+          to: business.user.email,
+          subject: `New Enquiry for ${business.name} - Mawjood`,
+          html,
+        });
+      }
     } catch (emailError) {
       console.error('Failed to send enquiry email:', emailError);
       // Don't fail the enquiry creation if email fails
@@ -416,8 +419,8 @@ export const updateEnquiryStatus = async (req: AuthRequest, res: Response) => {
       },
     });
 
-    // Send email notification to user if response is provided
-    if (response && updatedEnquiry.user && updatedEnquiry.business) {
+    // Send email notification to user when status is updated
+    if (updatedEnquiry.user && updatedEnquiry.business) {
       try {
         const businessName = updatedEnquiry.business.name || 'the business';
         const businessSlug = updatedEnquiry.business.slug || '';
@@ -425,26 +428,44 @@ export const updateEnquiryStatus = async (req: AuthRequest, res: Response) => {
           ? `${process.env.FRONTEND_URL || 'https://mawjood.com'}/businesses/${businessSlug}`
           : `${process.env.FRONTEND_URL || 'https://mawjood.com'}/businesses`;
         
+        // Determine email title and content based on whether there's a response
+        const hasResponse = !!response && response.trim();
+        const emailTitle = hasResponse ? 'Response to Your Enquiry' : 'Enquiry Status Update';
+        const statusLabels: Record<string, string> = {
+          [EnquiryStatus.OPEN]: 'Open',
+          [EnquiryStatus.IN_PROGRESS]: 'In Progress',
+          [EnquiryStatus.CLOSED]: 'Closed',
+          [EnquiryStatus.REJECTED]: 'Rejected',
+        };
+        const statusLabel = statusLabels[status] || status;
+        
         const html = `
           <!DOCTYPE html>
           <html>
             <head>
               <meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>Response to Your Enquiry</title>
+              <title>${emailTitle}</title>
             </head>
             <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
               <div style="background: linear-gradient(135deg, #1c4233 0%, #245240 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-                <h1 style="color: white; margin: 0;">Response to Your Enquiry</h1>
+                <h1 style="color: white; margin: 0;">${emailTitle}</h1>
               </div>
               <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
                 <h2 style="color: #1c4233; margin-top: 0;">Hello ${updatedEnquiry.user.firstName || 'there'},</h2>
-                <p>You have received a response to your enquiry for <strong>${businessName}</strong>.</p>
+                <p>Your enquiry for <strong>${businessName}</strong> has been updated.</p>
                 
                 <div style="background: white; padding: 20px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #1c4233;">
-                  <h3 style="color: #1c4233; margin-top: 0;">Response:</h3>
+                  <h3 style="color: #1c4233; margin-top: 0;">Status:</h3>
+                  <p style="margin: 0; font-size: 16px; font-weight: bold; color: #1c4233;">${statusLabel}</p>
+                </div>
+                
+                ${hasResponse ? `
+                <div style="background: white; padding: 20px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #22c55e;">
+                  <h3 style="color: #1c4233; margin-top: 0;">Response from Business:</h3>
                   <p style="white-space: pre-wrap; margin: 0;">${response}</p>
                 </div>
+                ` : ''}
                 
                 <div style="text-align: center; margin: 30px 0;">
                   <a href="${businessUrl}" 
@@ -460,24 +481,38 @@ export const updateEnquiryStatus = async (req: AuthRequest, res: Response) => {
           </html>
         `;
 
-        await emailService.sendEmail({
-          to: updatedEnquiry.user.email,
-          subject: `Response to Your Enquiry - ${businessName}`,
-          html,
-        });
+        // Only send email if user has an email
+        if (updatedEnquiry.user.email) {
+          const emailSubject = hasResponse 
+            ? `Response to Your Enquiry - ${businessName}`
+            : `Enquiry Status Updated - ${businessName}`;
+          
+          await emailService.sendEmail({
+            to: updatedEnquiry.user.email,
+            subject: emailSubject,
+            html,
+          });
+        }
 
         // Create notification for user
+        const notificationTitle = hasResponse 
+          ? 'Response to Your Enquiry'
+          : 'Enquiry Status Updated';
+        const notificationMessage = hasResponse
+          ? `You have received a response from ${businessName}`
+          : `Your enquiry status has been updated to ${statusLabel} for ${businessName}`;
+        
         await prismaClient.notification.create({
           data: {
             userId: updatedEnquiry.userId,
-            type: 'ENQUIRY_RESPONSE',
-            title: 'Response to Your Enquiry',
-            message: `You have received a response from ${businessName}`,
+            type: hasResponse ? 'ENQUIRY_RESPONSE' : 'ENQUIRY_STATUS_UPDATE',
+            title: notificationTitle,
+            message: notificationMessage,
             link: `/profile?tab=enquiries`,
           },
         });
       } catch (emailError) {
-        console.error('Failed to send response email:', emailError);
+        console.error('Failed to send enquiry update email:', emailError);
         // Don't fail the update if email fails
       }
     }

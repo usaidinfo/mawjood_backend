@@ -4,6 +4,7 @@ import { sendSuccess, sendError } from '../utils/response.util';
 import { AuthRequest } from '../types';
 import { paytabsService } from '../utils/paytabs.util';
 import { paytabsConfig } from '../config/paytabs';
+import { emailService } from '../services/email.service';
 
 // Get user payments
 export const getUserPayments = async (req: AuthRequest, res: Response) => {
@@ -176,8 +177,8 @@ export const createPayment = async (req: AuthRequest, res: Response) => {
         payment.id, // Use our payment ID as cart_id
         payment.description || `Payment for ${business.name}`,
         {
-          name: `${user.firstName} ${user.lastName}`.trim() || user.email,
-          email: user.email,
+          name: `${user.firstName} ${user.lastName}`.trim() || user.email || 'Customer',
+          email: user.email || 'customer@mawjood.com',
           phone: user.phone || '966500000000',
           street1: 'Riyadh',
           city: 'Riyadh',
@@ -437,6 +438,111 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
             link: `/dashboard/subscriptions`,
           },
         });
+
+        // Send email notification with transaction and plan details
+        if (payment.user?.email) {
+          try {
+            const startDate = new Date(pendingSubscription.startedAt).toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+            });
+            const endDate = new Date(pendingSubscription.endsAt).toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+            });
+
+            const planFeatures = [];
+            if (pendingSubscription.plan.topPlacement) {
+              planFeatures.push('Top Placement in Listings');
+            }
+            if (pendingSubscription.plan.verifiedBadge) {
+              planFeatures.push('Verified Badge');
+            }
+            if (pendingSubscription.plan.allowAdvertisements) {
+              planFeatures.push('Advertisement Creation');
+            }
+            if (pendingSubscription.plan.prioritySupport) {
+              planFeatures.push('Priority Support');
+            }
+
+            const html = `
+              <!DOCTYPE html>
+              <html>
+                <head>
+                  <meta charset="utf-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                  <title>Payment Successful - Subscription Activated</title>
+                </head>
+                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+                  <div style="background: linear-gradient(135deg, #1c4233 0%, #245240 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+                    <h1 style="color: white; margin: 0;">Payment Successful! ✅</h1>
+                  </div>
+                  <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
+                    <h2 style="color: #1c4233; margin-top: 0;">Thank You for Your Payment</h2>
+                    <p>Hello ${payment.user.firstName || 'Valued Customer'},</p>
+                    <p>We're excited to confirm that your payment has been processed successfully and your subscription has been activated!</p>
+                    
+                    <!-- Transaction Details -->
+                    <div style="background: white; border-left: 4px solid #22c55e; padding: 20px; margin: 20px 0; border-radius: 5px;">
+                      <h3 style="color: #1c4233; margin-top: 0;">Transaction Details</h3>
+                      <p style="margin: 8px 0;"><strong>Transaction ID:</strong> ${tran_ref}</p>
+                      <p style="margin: 8px 0;"><strong>Payment Amount:</strong> ${payment.amount} ${payment.currency}</p>
+                      <p style="margin: 8px 0;"><strong>Payment Date:</strong> ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                      <p style="margin: 8px 0;"><strong>Payment Method:</strong> PayTabs</p>
+                      <p style="margin: 8px 0;"><strong>Status:</strong> <span style="color: #22c55e; font-weight: bold;">Completed</span></p>
+                    </div>
+
+                    <!-- Subscription Details -->
+                    <div style="background: white; border-left: 4px solid #1c4233; padding: 20px; margin: 20px 0; border-radius: 5px;">
+                      <h3 style="color: #1c4233; margin-top: 0;">Subscription Details</h3>
+                      <p style="margin: 8px 0;"><strong>Business:</strong> ${pendingSubscription.business.name}</p>
+                      <p style="margin: 8px 0;"><strong>Plan Name:</strong> ${pendingSubscription.plan.name}</p>
+                      <p style="margin: 8px 0;"><strong>Start Date:</strong> ${startDate}</p>
+                      <p style="margin: 8px 0;"><strong>End Date:</strong> ${endDate}</p>
+                      ${planFeatures.length > 0 ? `
+                        <div style="margin-top: 15px;">
+                          <strong>Plan Features:</strong>
+                          <ul style="margin: 10px 0; padding-left: 20px;">
+                            ${planFeatures.map(feature => `<li style="margin: 5px 0;">${feature}</li>`).join('')}
+                          </ul>
+                        </div>
+                      ` : ''}
+                    </div>
+
+                    <div style="background: #e0f2fe; border: 1px solid #0ea5e9; padding: 15px; margin: 20px 0; border-radius: 5px;">
+                      <p style="margin: 0; color: #0c4a6e;"><strong>🎉 Your subscription is now active!</strong></p>
+                      <p style="margin: 10px 0 0 0; color: #0c4a6e;">${pendingSubscription.plan.topPlacement ? 'Your business is now featured at the top of listings!' : ''} ${pendingSubscription.plan.verifiedBadge ? 'Your business is now verified with a verified badge!' : ''}</p>
+                    </div>
+
+                    <div style="text-align: center; margin: 30px 0;">
+                      <a href="${process.env.FRONTEND_URL || 'https://mawjood.com'}/dashboard/subscriptions" 
+                         style="background: #1c4233; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+                        View Subscription Details
+                      </a>
+                    </div>
+
+                    <p>If you have any questions about your subscription or payment, please don't hesitate to contact our support team.</p>
+                    <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
+                    <p style="color: #666; font-size: 12px; margin: 0;">This is an automated message, please do not reply.</p>
+                  </div>
+                </body>
+              </html>
+            `;
+
+            await emailService.sendEmail({
+              to: payment.user.email,
+              subject: `Payment Successful - ${pendingSubscription.plan.name} Subscription Activated`,
+              html,
+            });
+
+            console.log(`✅ Payment success email sent to ${payment.user.email}`);
+          } catch (emailError) {
+            // Don't fail the payment processing if email fails
+            console.error('Failed to send payment success email:', emailError);
+          }
+        }
       }
     } else {
       // Payment failed or is pending - do NOT activate subscription

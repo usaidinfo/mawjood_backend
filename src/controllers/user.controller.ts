@@ -76,40 +76,52 @@ export const updateUserProfile = async (req: AuthRequest, res: Response) => {
 
     // Only allow email update if not verified
     if (email !== undefined) {
-      if (currentUser.emailVerified) {
+      if (currentUser.emailVerified && currentUser.email) {
         return sendError(res, 400, 'Cannot update verified email');
       }
-      // Check if email is already taken by another user
-      const emailExists = await prisma.user.findFirst({
-        where: {
-          email,
-          id: { not: userId },
-        },
-      });
-      if (emailExists) {
-        return sendError(res, 409, 'Email is already taken');
+      // If email is provided and not empty, check if it's already taken
+      if (email && email.trim()) {
+        const emailExists = await prisma.user.findFirst({
+          where: {
+            email: email.trim(),
+            id: { not: userId },
+          },
+        });
+        if (emailExists) {
+          return sendError(res, 409, 'Email is already taken');
+        }
+        updateData.email = email.trim();
+        updateData.emailVerified = false; // Reset verification when email changes
+      } else {
+        // Allow setting email to null
+        updateData.email = null;
+        updateData.emailVerified = false;
       }
-      updateData.email = email;
-      updateData.emailVerified = false; // Reset verification when email changes
     }
 
     // Only allow phone update if not verified
     if (phone !== undefined) {
-      if (currentUser.phoneVerified) {
+      if (currentUser.phoneVerified && currentUser.phone) {
         return sendError(res, 400, 'Cannot update verified phone number');
       }
-      // Check if phone is already taken by another user
-      const phoneExists = await prisma.user.findFirst({
-        where: {
-          phone,
-          id: { not: userId },
-        },
-      });
-      if (phoneExists) {
-        return sendError(res, 409, 'Phone number is already taken');
+      // If phone is provided and not empty, check if it's already taken
+      if (phone && phone.trim()) {
+        const phoneExists = await prisma.user.findFirst({
+          where: {
+            phone: phone.trim(),
+            id: { not: userId },
+          },
+        });
+        if (phoneExists) {
+          return sendError(res, 409, 'Phone number is already taken');
+        }
+        updateData.phone = phone.trim();
+        updateData.phoneVerified = false; // Reset verification when phone changes
+      } else {
+        // Allow setting phone to null
+        updateData.phone = null;
+        updateData.phoneVerified = false;
       }
-      updateData.phone = phone;
-      updateData.phoneVerified = false; // Reset verification when phone changes
     }
 
     const user = await prisma.user.update({
