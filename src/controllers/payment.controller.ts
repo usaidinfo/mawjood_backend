@@ -516,13 +516,6 @@ export const handlePayTabsCallback = async (req: Request, res: Response) => {
                       <p style="margin: 10px 0 0 0; color: #0c4a6e;">${pendingSubscription.plan.topPlacement ? 'Your business is now featured at the top of listings!' : ''} ${pendingSubscription.plan.verifiedBadge ? 'Your business is now verified with a verified badge!' : ''}</p>
                     </div>
 
-                    <div style="text-align: center; margin: 30px 0;">
-                      <a href="${process.env.FRONTEND_URL || 'https://mawjood.com'}/dashboard/subscriptions" 
-                         style="background: #1c4233; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
-                        View Subscription Details
-                      </a>
-                    </div>
-
                     <p>If you have any questions about your subscription or payment, please don't hesitate to contact our support team.</p>
                     <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
                     <p style="color: #666; font-size: 12px; margin: 0;">This is an automated message, please do not reply.</p>
