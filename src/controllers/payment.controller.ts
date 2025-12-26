@@ -998,3 +998,418 @@ export const getAllPayments = async (req: Request, res: Response) => {
     return sendError(res, 500, 'Failed to fetch payments', error);
   }
 };
+
+// ============================================================================
+// MOBILE-SPECIFIC PAYMENT ENDPOINTS
+// These endpoints are separate from web endpoints to handle mobile deep linking
+// ============================================================================
+
+// Create payment for mobile app with PayTabs integration
+export const createMobilePayment = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    const { businessId, amount, currency, description } = req.body;
+
+    if (!businessId || !amount) {
+      return sendError(res, 400, 'Business ID and amount are required');
+    }
+
+    // Validate amount
+    const paymentAmount = parseFloat(amount);
+    if (isNaN(paymentAmount) || paymentAmount <= 0) {
+      return sendError(res, 400, 'Invalid payment amount');
+    }
+
+    // Get user details
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+      },
+    });
+
+    if (!user) {
+      return sendError(res, 404, 'User not found');
+    }
+
+    // Check if business exists
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+      },
+    });
+
+    if (!business) {
+      return sendError(res, 404, 'Business not found');
+    }
+
+    // Create payment record in database (PENDING status)
+    const payment = await prisma.payment.create({
+      data: {
+        userId: userId!,
+        businessId,
+        amount: paymentAmount,
+        currency: currency || paytabsConfig.currency || 'SAR',
+        status: 'PENDING',
+        description: description || `Payment for ${business.name}`,
+        paymentMethod: 'PAYTABS',
+      },
+    });
+
+    // Build mobile-specific return URL that will redirect to mobile deep link
+    const backendBaseUrl =
+      process.env.BACKEND_URL ||
+      process.env.API_BASE_URL ||
+      'http://localhost:5000';
+    const mobileReturnUrl = `${backendBaseUrl}/api/payments/mobile/return`;
+
+    // Create PayTabs payment page
+    try {
+      const paytabsResponse = await paytabsService.createPaymentPage(
+        paymentAmount,
+        payment.currency,
+        payment.id, // Use our payment ID as cart_id
+        payment.description || `Payment for ${business.name}`,
+        {
+          name: `${user.firstName} ${user.lastName}`.trim() || user.email || 'Customer',
+          email: user.email || 'customer@mawjood.com',
+          phone: user.phone || '966500000000',
+          street1: 'Riyadh',
+          city: 'Riyadh',
+          state: 'Riyadh',
+          country: 'SA',
+          zip: '11564',
+        },
+        paytabsConfig.callbackUrl, // Same callback URL (server-to-server)
+        mobileReturnUrl // Mobile-specific return URL
+      );
+
+      // Update payment with PayTabs transaction reference
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          transactionId: paytabsResponse.tran_ref,
+        },
+      });
+
+      return sendSuccess(res, 201, 'Mobile payment page created successfully', {
+        paymentId: payment.id,
+        redirectUrl: paytabsResponse.redirect_url,
+        transactionRef: paytabsResponse.tran_ref,
+        platform: 'mobile',
+      });
+    } catch (paytabsError: any) {
+      // If PayTabs fails, mark payment as failed
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: { status: 'FAILED' },
+      });
+
+      console.error('PayTabs mobile payment error:', paytabsError);
+      console.error('PayTabs error details:', JSON.stringify({
+        message: paytabsError?.message,
+        response: paytabsError?.response?.data,
+        status: paytabsError?.response?.status,
+        stack: paytabsError?.stack,
+      }, null, 2));
+      
+      // Extract more detailed error message
+      let errorMessage = 'Failed to create payment page with PayTabs';
+      if (paytabsError?.response?.data?.message) {
+        errorMessage = paytabsError.response.data.message;
+      } else if (paytabsError?.message) {
+        errorMessage = paytabsError.message;
+      } else if (paytabsError?.response?.data?.error) {
+        errorMessage = paytabsError.response.data.error;
+      } else if (paytabsError?.response?.data) {
+        errorMessage = JSON.stringify(paytabsError.response.data);
+      }
+      
+      return sendError(res, 500, errorMessage);
+    }
+  } catch (error: any) {
+    console.error('Create mobile payment error:', error);
+    const errorMessage = error?.message || error?.response?.data?.message || 'Failed to create mobile payment';
+    return sendError(res, 500, errorMessage, error);
+  }
+};
+
+// PayTabs Return Handler for Mobile (for redirecting user after payment)
+// This redirects to mobile deep link instead of web URL
+export const handleMobilePayTabsReturn = async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  console.log('═══════════════════════════════════════════════════════');
+  console.log('🔄 [MOBILE RETURN] PayTabs Mobile Return Handler STARTED');
+  console.log('🕐 [MOBILE RETURN] Timestamp:', new Date().toISOString());
+  console.log('📥 [MOBILE RETURN] Method:', req.method);
+  console.log('📥 [MOBILE RETURN] URL:', req.url);
+  console.log('📥 [MOBILE RETURN] Query params:', JSON.stringify(req.query, null, 2));
+  console.log('📥 [MOBILE RETURN] Body:', JSON.stringify(req.body, null, 2));
+  
+  try {
+    const tranRef =
+      (req.body?.tranRef as string) ||
+      (req.body?.tran_ref as string) ||
+      (req.query?.tranRef as string) ||
+      (req.query?.tran_ref as string);
+
+    const cartId =
+      (req.body?.cartId as string) ||
+      (req.body?.cart_id as string) ||
+      (req.query?.cartId as string) ||
+      (req.query?.cart_id as string);
+
+    console.log('🔍 [MOBILE RETURN] Extracted values:', {
+      tranRef,
+      cartId,
+      sources: {
+        tranRefFromBody: req.body?.tranRef || req.body?.tran_ref,
+        tranRefFromQuery: req.query?.tranRef || req.query?.tran_ref,
+        cartIdFromBody: req.body?.cartId || req.body?.cart_id,
+        cartIdFromQuery: req.query?.cartId || req.query?.cart_id,
+      },
+    });
+
+    if (!tranRef || !cartId) {
+      console.error('❌ [MOBILE RETURN] Missing required parameters:', { tranRef, cartId });
+      console.log('═══════════════════════════════════════════════════════');
+      return res.redirect(303, `/api/payments/mobile/redirect?error=invalid_params`);
+    }
+
+    console.log('✅ [MOBILE RETURN] All parameters present, proceeding with redirect...');
+
+    const redirectUrl = `/api/payments/mobile/redirect?paymentId=${cartId}&tranRef=${tranRef}`;
+    console.log('🔄 [MOBILE RETURN] Redirecting to:', redirectUrl);
+    console.log('═══════════════════════════════════════════════════════');
+
+    return res.redirect(303, redirectUrl);
+  } catch (error: any) {
+    const duration = Date.now() - startTime;
+    console.error('❌ [MOBILE RETURN] PayTabs mobile return error after', duration, 'ms:', error);
+    console.error('❌ [MOBILE RETURN] Error stack:', error?.stack);
+    console.log('═══════════════════════════════════════════════════════');
+    return res.redirect(303, `/api/payments/mobile/redirect?error=exception`);
+  }
+};
+
+// PayTabs Redirect Handler for Mobile (GET endpoint for two-step redirect)
+// This endpoint reads payment status from DB and redirects to mobile deep link
+export const handleMobilePayTabsRedirect = async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  console.log('═══════════════════════════════════════════════════════');
+  console.log('🔄 [MOBILE REDIRECT] PayTabs Mobile Redirect Handler STARTED');
+  console.log('🕐 [MOBILE REDIRECT] Timestamp:', new Date().toISOString());
+  console.log('📥 [MOBILE REDIRECT] Method:', req.method);
+  console.log('📥 [MOBILE REDIRECT] URL:', req.url);
+  console.log('📥 [MOBILE REDIRECT] Query params:', JSON.stringify(req.query, null, 2));
+  console.log('📥 [MOBILE REDIRECT] Headers:', JSON.stringify(req.headers, null, 2));
+  
+  const { paymentId, tranRef, error } = req.query;
+  
+  console.log('🔍 [MOBILE REDIRECT] Extracted query params:', {
+    paymentId,
+    tranRef,
+    error,
+  });
+
+  // Mobile deep link scheme (configure this in your mobile app)
+  const mobileDeepLinkScheme = process.env.MOBILE_DEEP_LINK_SCHEME || 'mawjood';
+  
+  console.log('📱 [MOBILE REDIRECT] Mobile deep link scheme:', mobileDeepLinkScheme);
+  
+  if (error || !paymentId) {
+    console.error('❌ [MOBILE REDIRECT] Error or missing paymentId:', { error, paymentId });
+    const failedDeepLink = `${mobileDeepLinkScheme}://payments/failed?error=${error || 'unknown'}`;
+    console.log('🔄 [MOBILE REDIRECT] Redirecting to failed deep link:', failedDeepLink);
+    console.log('═══════════════════════════════════════════════════════');
+    // Return HTML page that redirects to deep link (for browsers that don't auto-redirect)
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Redirecting to App...</title>
+          <script>
+            window.location.href = "${failedDeepLink}";
+            setTimeout(function() {
+              window.location.href = "${failedDeepLink}";
+            }, 100);
+          </script>
+        </head>
+        <body>
+          <p>Redirecting to app...</p>
+          <p>If you are not redirected, <a href="${failedDeepLink}">click here</a></p>
+        </body>
+      </html>
+    `);
+  }
+
+  console.log('🔍 [MOBILE REDIRECT] Looking up payment in database with ID:', paymentId);
+  
+  try {
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId as string },
+    });
+
+    if (!payment) {
+      console.error('❌ [MOBILE REDIRECT] Payment not found in database for ID:', paymentId);
+      const failedDeepLink = `${mobileDeepLinkScheme}://payments/failed?paymentId=${paymentId}`;
+      console.log('🔄 [MOBILE REDIRECT] Redirecting to failed deep link (payment not found):', failedDeepLink);
+      console.log('═══════════════════════════════════════════════════════');
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Redirecting to App...</title>
+            <script>
+              window.location.href = "${failedDeepLink}";
+              setTimeout(function() {
+                window.location.href = "${failedDeepLink}";
+              }, 100);
+            </script>
+          </head>
+          <body>
+            <p>Redirecting to app...</p>
+            <p>If you are not redirected, <a href="${failedDeepLink}">click here</a></p>
+          </body>
+        </html>
+      `);
+    }
+
+    console.log('✅ [MOBILE REDIRECT] Payment found:', {
+      id: payment.id,
+      status: payment.status,
+      amount: payment.amount,
+      currency: payment.currency,
+      transactionId: payment.transactionId,
+      createdAt: payment.createdAt,
+      updatedAt: payment.updatedAt,
+    });
+
+    // If payment is still PENDING, callback might not have processed yet
+    // Wait a bit and check again, or verify with PayTabs directly
+    let finalPayment = payment;
+    if (payment.status === 'PENDING' && tranRef) {
+      console.log('⏳ [MOBILE REDIRECT] Payment status is PENDING, waiting for callback to process...');
+      
+      // Wait up to 3 seconds, checking every 500ms for updated status
+      for (let i = 0; i < 6; i++) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        const refreshedPayment = await prisma.payment.findUnique({
+          where: { id: paymentId as string },
+        });
+        
+        if (refreshedPayment && refreshedPayment.status !== 'PENDING') {
+          console.log(`✅ [MOBILE REDIRECT] Payment status updated after ${(i + 1) * 500}ms:`, refreshedPayment.status);
+          finalPayment = refreshedPayment;
+          break;
+        }
+      }
+      
+      // If still PENDING, try to verify with PayTabs API
+      if (finalPayment.status === 'PENDING' && tranRef) {
+        console.log('🔐 [MOBILE REDIRECT] Still PENDING, verifying with PayTabs API...');
+        try {
+          const verificationResult = await paytabsService.verifyPayment(tranRef as string);
+          const paymentStatus = paytabsService.parsePaymentStatus(
+            verificationResult.payment_result?.response_status
+          );
+          
+          if (paymentStatus !== 'PENDING') {
+            console.log('✅ [MOBILE REDIRECT] PayTabs API returned status:', paymentStatus);
+            // Update payment in database
+            finalPayment = await prisma.payment.update({
+              where: { id: paymentId as string },
+              data: {
+                status: paymentStatus,
+                transactionId: tranRef as string,
+              },
+            });
+            console.log('✅ [MOBILE REDIRECT] Payment updated in database with status:', paymentStatus);
+          }
+        } catch (verifyError: any) {
+          console.error('❌ [MOBILE REDIRECT] Error verifying with PayTabs:', verifyError?.message);
+        }
+      }
+    }
+
+    let deepLinkUrl: string;
+    
+    if (finalPayment.status === 'COMPLETED') {
+      deepLinkUrl = `${mobileDeepLinkScheme}://payments/success?paymentId=${paymentId}&tranRef=${tranRef || finalPayment.transactionId || ''}`;
+      console.log('✅ [MOBILE REDIRECT] Payment status is COMPLETED, redirecting to success deep link');
+    } else if (finalPayment.status === 'FAILED') {
+      deepLinkUrl = `${mobileDeepLinkScheme}://payments/failed?paymentId=${paymentId}&tranRef=${tranRef || finalPayment.transactionId || ''}`;
+      console.log('❌ [MOBILE REDIRECT] Payment status is FAILED, redirecting to failed deep link');
+    } else {
+      deepLinkUrl = `${mobileDeepLinkScheme}://payments/pending?paymentId=${paymentId}&tranRef=${tranRef || finalPayment.transactionId || ''}`;
+      console.log('⏳ [MOBILE REDIRECT] Payment status is', finalPayment.status, ', redirecting to pending deep link');
+    }
+
+    const duration = Date.now() - startTime;
+    console.log('🔄 [MOBILE REDIRECT] Final deep link URL:', deepLinkUrl);
+    console.log(`✅ [MOBILE REDIRECT] Redirect handler completed in ${duration}ms`);
+    console.log('📤 [MOBILE REDIRECT] Sending HTML redirect response...');
+    console.log('═══════════════════════════════════════════════════════');
+    
+    // Return HTML page that redirects to deep link (for browsers that don't auto-redirect)
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Redirecting to App...</title>
+          <script>
+            window.location.href = "${deepLinkUrl}";
+            setTimeout(function() {
+              window.location.href = "${deepLinkUrl}";
+            }, 100);
+          </script>
+        </head>
+        <body>
+          <p>Redirecting to app...</p>
+          <p>If you are not redirected, <a href="${deepLinkUrl}">click here</a></p>
+        </body>
+      </html>
+    `);
+  } catch (error: any) {
+    const duration = Date.now() - startTime;
+    console.error('❌ [MOBILE REDIRECT] Error in mobile redirect handler after', duration, 'ms:', error);
+    console.error('❌ [MOBILE REDIRECT] Error stack:', error?.stack);
+    const failedDeepLink = `${mobileDeepLinkScheme}://payments/failed?error=exception`;
+    console.log('🔄 [MOBILE REDIRECT] Redirecting to failed deep link (exception):', failedDeepLink);
+    console.log('═══════════════════════════════════════════════════════');
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Redirecting to App...</title>
+          <script>
+            window.location.href = "${failedDeepLink}";
+            setTimeout(function() {
+              window.location.href = "${failedDeepLink}";
+            }, 100);
+          </script>
+        </head>
+        <body>
+          <p>Redirecting to app...</p>
+          <p>If you are not redirected, <a href="${failedDeepLink}">click here</a></p>
+        </body>
+      </html>
+    `);
+  }
+};
