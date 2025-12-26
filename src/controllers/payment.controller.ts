@@ -1064,11 +1064,34 @@ export const createMobilePayment = async (req: AuthRequest, res: Response) => {
     });
 
     // Build mobile-specific return URL that will redirect to mobile deep link
-    const backendBaseUrl =
-      process.env.BACKEND_URL ||
-      process.env.API_BASE_URL ||
-      'http://localhost:5000';
+    // Use the same backend URL logic as paytabsConfig to ensure consistency
+    // Priority: BACKEND_URL env var > API_BASE_URL env var > construct from request
+    let backendBaseUrl = process.env.BACKEND_URL || process.env.API_BASE_URL;
+    
+    if (!backendBaseUrl) {
+      // Fallback: construct from request (for local development)
+      const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+      const host = req.get('host');
+      if (!host || host.includes('localhost') || host.includes('127.0.0.1')) {
+        // If still localhost, try to get from headers (for production behind proxy)
+        const forwardedHost = req.headers['x-forwarded-host'];
+        const forwardedProto = req.headers['x-forwarded-proto'];
+        if (forwardedHost && !forwardedHost.includes('localhost')) {
+          backendBaseUrl = `${forwardedProto || 'https'}://${forwardedHost}`;
+        } else {
+          // Last resort: use localhost (should not happen in production)
+          backendBaseUrl = `${protocol}://${host || 'localhost:5000'}`;
+          console.warn('⚠️ [MOBILE PAYMENT] WARNING: Using localhost for return URL. Set BACKEND_URL env var in production!');
+        }
+      } else {
+        backendBaseUrl = `${protocol}://${host}`;
+      }
+    }
+    
     const mobileReturnUrl = `${backendBaseUrl}/api/payments/mobile/return`;
+    
+    console.log('📱 [MOBILE PAYMENT] Backend base URL:', backendBaseUrl);
+    console.log('📱 [MOBILE PAYMENT] Mobile return URL:', mobileReturnUrl);
 
     // Create PayTabs payment page
     try {
@@ -1180,12 +1203,51 @@ export const handleMobilePayTabsReturn = async (req: Request, res: Response) => 
     if (!tranRef || !cartId) {
       console.error('❌ [MOBILE RETURN] Missing required parameters:', { tranRef, cartId });
       console.log('═══════════════════════════════════════════════════════');
-      return res.redirect(303, `/api/payments/mobile/redirect?error=invalid_params`);
+      
+      // Build absolute redirect URL
+      let backendBaseUrl = process.env.BACKEND_URL || process.env.API_BASE_URL;
+      if (!backendBaseUrl) {
+        const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+        const host = req.get('host');
+        const forwardedHost = req.headers['x-forwarded-host'];
+        const forwardedProto = req.headers['x-forwarded-proto'];
+        if (forwardedHost && !forwardedHost.includes('localhost')) {
+          backendBaseUrl = `${forwardedProto || 'https'}://${forwardedHost}`;
+        } else if (host && !host.includes('localhost')) {
+          backendBaseUrl = `${protocol}://${host}`;
+        } else {
+          backendBaseUrl = `${protocol}://${host || 'localhost:5000'}`;
+        }
+      }
+      
+      return res.redirect(303, `${backendBaseUrl}/api/payments/mobile/redirect?error=invalid_params`);
     }
 
     console.log('✅ [MOBILE RETURN] All parameters present, proceeding with redirect...');
 
-    const redirectUrl = `/api/payments/mobile/redirect?paymentId=${cartId}&tranRef=${tranRef}`;
+    // Build absolute redirect URL (not relative) to avoid localhost issues
+    let backendBaseUrl = process.env.BACKEND_URL || process.env.API_BASE_URL;
+    
+    if (!backendBaseUrl) {
+      // Construct from request
+      const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+      const host = req.get('host');
+      if (!host || host.includes('localhost') || host.includes('127.0.0.1')) {
+        // Try forwarded headers (for production behind proxy)
+        const forwardedHost = req.headers['x-forwarded-host'];
+        const forwardedProto = req.headers['x-forwarded-proto'];
+        if (forwardedHost && !forwardedHost.includes('localhost')) {
+          backendBaseUrl = `${forwardedProto || 'https'}://${forwardedHost}`;
+        } else {
+          backendBaseUrl = `${protocol}://${host || 'localhost:5000'}`;
+        }
+      } else {
+        backendBaseUrl = `${protocol}://${host}`;
+      }
+    }
+    
+    const redirectUrl = `${backendBaseUrl}/api/payments/mobile/redirect?paymentId=${cartId}&tranRef=${tranRef}`;
+    console.log('🔄 [MOBILE RETURN] Backend base URL:', backendBaseUrl);
     console.log('🔄 [MOBILE RETURN] Redirecting to:', redirectUrl);
     console.log('═══════════════════════════════════════════════════════');
 
@@ -1195,7 +1257,24 @@ export const handleMobilePayTabsReturn = async (req: Request, res: Response) => 
     console.error('❌ [MOBILE RETURN] PayTabs mobile return error after', duration, 'ms:', error);
     console.error('❌ [MOBILE RETURN] Error stack:', error?.stack);
     console.log('═══════════════════════════════════════════════════════');
-    return res.redirect(303, `/api/payments/mobile/redirect?error=exception`);
+    
+    // Build absolute redirect URL
+    let backendBaseUrl = process.env.BACKEND_URL || process.env.API_BASE_URL;
+    if (!backendBaseUrl) {
+      const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+      const host = req.get('host');
+      const forwardedHost = req.headers['x-forwarded-host'];
+      const forwardedProto = req.headers['x-forwarded-proto'];
+      if (forwardedHost && !forwardedHost.includes('localhost')) {
+        backendBaseUrl = `${forwardedProto || 'https'}://${forwardedHost}`;
+      } else if (host && !host.includes('localhost')) {
+        backendBaseUrl = `${protocol}://${host}`;
+      } else {
+        backendBaseUrl = `${protocol}://${host || 'localhost:5000'}`;
+      }
+    }
+    
+    return res.redirect(303, `${backendBaseUrl}/api/payments/mobile/redirect?error=exception`);
   }
 };
 
